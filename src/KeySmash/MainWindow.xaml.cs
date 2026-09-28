@@ -28,6 +28,19 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+        if (File.Exists(iconPath))
+        {
+            try
+            {
+                Icon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(iconPath, UriKind.Absolute));
+            }
+            catch
+            {
+                // ignore icon decoding errors
+            }
+        }
+
         _settings = AppSettings.Load();
 
         InitializeAudio();
@@ -40,12 +53,6 @@ public partial class MainWindow : Window
             _keyboardHook.Start();
 
         _isInitializing = false;
-
-        if (App.StartInBackground)
-        {
-            WindowState = WindowState.Minimized;
-            Hide();
-        }
     }
 
     private void InitializeAudio()

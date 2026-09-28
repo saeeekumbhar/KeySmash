@@ -35,6 +35,14 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
+
+        var mainWindow = new MainWindow();
+        MainWindow = mainWindow;
+
+        if (!StartInBackground)
+        {
+            mainWindow.Show();
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
