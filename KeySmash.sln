@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{75066BF3-4CFD-4161-BAFC-2EE34112799E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeySmash", "src\KeySmash\KeySmash.csproj", "{4FAEFD99-B7C3-418B-8C61-8C82DF6BBAAC}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{2D2E6CD0-52E9-47A4-BD39-DB5F16474075}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeySmash.Tests", "tests\KeySmash.Tests\KeySmash.Tests.csproj", "{B1C93820-5CC1-4DB4-BC26-4523EA78DA15}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4FAEFD99-B7C3-418B-8C61-8C82DF6BBAAC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4FAEFD99-B7C3-418B-8C61-8C82DF6BBAAC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4FAEFD99-B7C3-418B-8C61-8C82DF6BBAAC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4FAEFD99-B7C3-418B-8C61-8C82DF6BBAAC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B1C93820-5CC1-4DB4-BC26-4523EA78DA15}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B1C93820-5CC1-4DB4-BC26-4523EA78DA15}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B1C93820-5CC1-4DB4-BC26-4523EA78DA15}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B1C93820-5CC1-4DB4-BC26-4523EA78DA15}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{4FAEFD99-B7C3-418B-8C61-8C82DF6BBAAC} = {75066BF3-4CFD-4161-BAFC-2EE34112799E}
+		{B1C93820-5CC1-4DB4-BC26-4523EA78DA15} = {2D2E6CD0-52E9-47A4-BD39-DB5F16474075}
+	EndGlobalSection
+EndGlobal
