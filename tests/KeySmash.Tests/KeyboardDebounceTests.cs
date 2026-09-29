@@ -32,4 +32,24 @@ public class KeyboardDebounceTests
         var passes = elapsedMs >= thresholdMs;
         Assert.Equal(shouldTrigger, passes);
     }
+
+    [Fact]
+    public void SuppressHeldKeyRepeats_DefaultsToTrue()
+    {
+        using var hook = new KeyboardHook();
+        Assert.True(hook.SuppressHeldKeyRepeats);
+    }
+
+    [Fact]
+    public void KeyStateMap_InitializesCleanAndHandlesBounds()
+    {
+        using var hook = new KeyboardHook();
+
+        Assert.False(hook.IsKeyDown(0x57)); // 'W' key
+        Assert.False(hook.IsKeyDown(0x20)); // Space
+        Assert.False(hook.IsKeyDown(999));  // Out-of-bounds key
+
+        hook.ResetKeyState();
+        Assert.False(hook.IsKeyDown(0x57));
+    }
 }

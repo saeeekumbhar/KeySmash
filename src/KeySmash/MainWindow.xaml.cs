@@ -8,6 +8,7 @@ using System.Windows.Media;
 using KeySmash.Audio;
 using KeySmash.Keyboard;
 using KeySmash.Settings;
+using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 
 namespace KeySmash;
@@ -36,10 +37,26 @@ public partial class MainWindow : Window
     private Forms.ToolStripMenuItem? _traySoundItem;
     private Forms.ToolStripMenuItem? _trayVolumeItem;
     private bool _hasShownTrayBalloon;
+    private readonly System.Windows.Threading.DispatcherTimer _saveDebounceTimer;
+    private readonly object _cleanupLock = new();
+    private bool _isCleanedUp;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        _saveDebounceTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(400)
+        };
+        _saveDebounceTimer.Tick += (s, e) =>
+        {
+            _saveDebounceTimer.Stop();
+            _settings?.Save();
+        };
+
+        SystemEvents.SessionEnding += OnSessionEnding;
+        AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 
         // Ensure HWND is allocated immediately so global hotkeys and IPC register even in --background
         var helper = new WindowInteropHelper(this);
@@ -384,8 +401,14 @@ public partial class MainWindow : Window
                 VolumeValueLabel.Text = $"{volPct}%";
         }
 
-        _settings.Save();
+        RequestSettingsSave();
         UpdateTrayMenu();
+    }
+
+    private void RequestSettingsSave()
+    {
+        _saveDebounceTimer.Stop();
+        _saveDebounceTimer.Start();
     }
 
     private void ToggleMute()
@@ -589,6 +612,7 @@ public partial class MainWindow : Window
     private void ExitApplication()
     {
         _isExiting = true;
+        CleanupResources();
         Close();
     }
 
@@ -619,30 +643,77 @@ public partial class MainWindow : Window
             return;
         }
 
-        try
-        {
-            var helper = new WindowInteropHelper(this);
-            UnregisterHotKey(helper.Handle, MuteHotKeyId);
-        }
-        catch
-        {
-            // ignore hotkey cleanup errors
-        }
-
-        // clean shutdown
-        _keyboardHook.Stop();
-        _keyboardHook.Dispose();
-
-        _soundManager.Dispose();
-
-        if (_notifyIcon != null)
-        {
-            _notifyIcon.Visible = false;
-            _notifyIcon.Dispose();
-            _notifyIcon = null;
-        }
+        CleanupResources();
 
         base.OnClosing(e);
+    }
+
+    private void OnSessionEnding(object? sender, SessionEndingEventArgs e)
+    {
+        CleanupResources();
+    }
+
+    private void OnProcessExit(object? sender, EventArgs e)
+    {
+        CleanupResources();
+    }
+
+    private void CleanupResources()
+    {
+        lock (_cleanupLock)
+        {
+            if (_isCleanedUp) return;
+            _isCleanedUp = true;
+
+            try
+            {
+                SystemEvents.SessionEnding -= OnSessionEnding;
+                AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
+            }
+            catch { }
+
+            try
+            {
+                _saveDebounceTimer.Stop();
+                _settings.Save();
+            }
+            catch { }
+
+            try
+            {
+                var helper = new WindowInteropHelper(this);
+                if (_isHotKeyRegistered && helper.Handle != nint.Zero)
+                {
+                    UnregisterHotKey(helper.Handle, MuteHotKeyId);
+                    _isHotKeyRegistered = false;
+                }
+            }
+            catch { }
+
+            try
+            {
+                _keyboardHook.Stop();
+                _keyboardHook.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                _soundManager.Dispose();
+            }
+            catch { }
+
+            try
+            {
+                if (_notifyIcon != null)
+                {
+                    _notifyIcon.Visible = false;
+                    _notifyIcon.Dispose();
+                    _notifyIcon = null;
+                }
+            }
+            catch { }
+        }
     }
 
     [DllImport("user32.dll", SetLastError = true)]

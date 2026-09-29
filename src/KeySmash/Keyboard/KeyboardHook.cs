@@ -25,8 +25,8 @@ public sealed class KeyboardHook : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _consumerTask;
 
-    // Track active key to suppress machine-gun repeats when keys are held down (e.g. gaming W/A/S/D)
-    private uint _activeVkCode;
+    // Full 256-key state map to accurately track multiple held keys simultaneously (e.g. gaming WASD + Shift/Space)
+    private readonly bool[] _isKeyDown = new bool[256];
     public bool SuppressHeldKeyRepeats { get; set; } = true;
 
     public event Action<KeyCategory>? KeyPressed;
@@ -52,6 +52,13 @@ public sealed class KeyboardHook : IDisposable
         });
 
         _consumerTask = Task.Run(ProcessQueueAsync);
+    }
+
+    public bool IsKeyDown(uint vkCode) => vkCode < 256 && _isKeyDown[vkCode];
+
+    public void ResetKeyState()
+    {
+        Array.Clear(_isKeyDown, 0, _isKeyDown.Length);
     }
 
     private async Task ProcessQueueAsync()
@@ -85,6 +92,8 @@ public sealed class KeyboardHook : IDisposable
         if (_hookId != nint.Zero)
             return;
 
+        ResetKeyState();
+
         using var curProcess = Process.GetCurrentProcess();
         using var curModule = curProcess.MainModule;
         var moduleHandle = curModule?.BaseAddress ?? nint.Zero;
@@ -99,6 +108,7 @@ public sealed class KeyboardHook : IDisposable
 
         UnhookWindowsHookEx(_hookId);
         _hookId = nint.Zero;
+        ResetKeyState();
     }
 
     private nint HookCallback(int nCode, nint wParam, nint lParam)
@@ -109,40 +119,65 @@ public sealed class KeyboardHook : IDisposable
             if (msg == WmKeydown || msg == WmSyskeydown)
             {
                 var vkCode = (uint)Marshal.ReadInt32(lParam);
-                var isRepeat = (vkCode == _activeVkCode);
-                _activeVkCode = vkCode;
-
-                // If held key repeats are suppressed and this is an auto-repeat of the same key:
-                // Only allow repeat for Backspace (with throttled rate) or if suppression is disabled
-                if (!isRepeat || !SuppressHeldKeyRepeats || vkCode == 0x08)
+                bool isRepeat = false;
+                if (vkCode < 256)
                 {
-                    var now = Stopwatch.GetTimestamp();
+                    isRepeat = _isKeyDown[vkCode];
+                    _isKeyDown[vkCode] = true;
+                }
+
+                bool allowTrigger = false;
+                long now = Stopwatch.GetTimestamp();
+
+                if (!isRepeat)
+                {
                     var elapsedMs = (now - _lastPressTimestamp) * 1000 / Stopwatch.Frequency;
-                    var threshold = (isRepeat && vkCode == 0x08) ? 80 : _minIntervalMs;
-
-                    if (elapsedMs >= threshold)
+                    if (elapsedMs >= _minIntervalMs)
                     {
-                        _lastPressTimestamp = now;
-
-                        var category = vkCode switch
-                        {
-                            0x20 => KeyCategory.Space,
-                            0x0D => KeyCategory.Enter,
-                            0x08 => KeyCategory.Backspace,
-                            _ => KeyCategory.General
-                        };
-
-                        // Push to lock-free channel in nanoseconds and return immediately!
-                        _keyChannel.Writer.TryWrite(category);
+                        allowTrigger = true;
                     }
+                }
+                else if (!SuppressHeldKeyRepeats)
+                {
+                    var elapsedMs = (now - _lastPressTimestamp) * 1000 / Stopwatch.Frequency;
+                    if (elapsedMs >= _minIntervalMs)
+                    {
+                        allowTrigger = true;
+                    }
+                }
+                else if (vkCode == 0x08 || vkCode == 0x2E) // Backspace or Delete
+                {
+                    // Allow smooth, pleasant pacing when deleting text (90ms)
+                    var elapsedMs = (now - _lastPressTimestamp) * 1000 / Stopwatch.Frequency;
+                    if (elapsedMs >= 90)
+                    {
+                        allowTrigger = true;
+                    }
+                }
+                // All other keys (WASD, letters, numbers, space) are completely silenced while held
+
+                if (allowTrigger)
+                {
+                    _lastPressTimestamp = now;
+
+                    var category = vkCode switch
+                    {
+                        0x20 => KeyCategory.Space,
+                        0x0D => KeyCategory.Enter,
+                        0x08 => KeyCategory.Backspace,
+                        _ => KeyCategory.General
+                    };
+
+                    // Push to lock-free channel in nanoseconds and return immediately!
+                    _keyChannel.Writer.TryWrite(category);
                 }
             }
             else if (msg == WmKeyup || msg == WmSyskeyup)
             {
                 var vkCode = (uint)Marshal.ReadInt32(lParam);
-                if (vkCode == _activeVkCode)
+                if (vkCode < 256)
                 {
-                    _activeVkCode = 0;
+                    _isKeyDown[vkCode] = false;
                 }
             }
         }
