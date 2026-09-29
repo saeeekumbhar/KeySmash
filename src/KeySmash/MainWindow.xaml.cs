@@ -31,10 +31,15 @@ public partial class MainWindow : Window
     private Forms.ToolStripMenuItem? _trayMuteItem;
     private Forms.ToolStripMenuItem? _traySoundItem;
     private Forms.ToolStripMenuItem? _trayVolumeItem;
+    private bool _hasShownTrayBalloon;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        // Ensure HWND is allocated immediately so global hotkeys and IPC register even in --background
+        var helper = new WindowInteropHelper(this);
+        helper.EnsureHandle();
 
         var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
         if (File.Exists(iconPath))
@@ -56,6 +61,7 @@ public partial class MainWindow : Window
         ApplySettingsToUi();
 
         _keyboardHook.KeyPressed += OnKeyPressed;
+        _keyboardHook.SuppressHeldKeyRepeats = _settings.SuppressHeldKeyRepeats;
 
         if (_settings.Enabled)
             _keyboardHook.Start();
@@ -209,6 +215,8 @@ public partial class MainWindow : Window
 
         RandomizeCheckBox.IsChecked = _settings.Randomize;
         StartupCheckBox.IsChecked = AppSettings.IsStartupRegistered();
+        MinimizeToTrayCheckBox.IsChecked = _settings.MinimizeToTrayOnClose;
+        SuppressRepeatCheckBox.IsChecked = _settings.SuppressHeldKeyRepeats;
     }
 
     private void OnKeyPressed(KeyCategory category)
@@ -245,13 +253,17 @@ public partial class MainWindow : Window
     {
         if (enabled)
         {
-            StatusLabel.Text = "Enabled";
+            StatusLabel.Text = "Active";
             StatusLabel.Foreground = (SolidColorBrush)FindResource("SuccessBrush");
+            if (StatusDetailLabel != null)
+                StatusDetailLabel.Text = "Listening for keystrokes";
         }
         else
         {
-            StatusLabel.Text = "Disabled";
+            StatusLabel.Text = "Paused";
             StatusLabel.Foreground = (SolidColorBrush)FindResource("TextSecondaryBrush");
+            if (StatusDetailLabel != null)
+                StatusDetailLabel.Text = "Hooks detached • 0% CPU";
         }
     }
 
@@ -459,6 +471,30 @@ public partial class MainWindow : Window
         AppSettings.SetStartupRegistration(startWithWindows);
     }
 
+    private void MinimizeToTrayCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing) return;
+
+        var minimizeToTray = MinimizeToTrayCheckBox.IsChecked ?? true;
+        _settings.MinimizeToTrayOnClose = minimizeToTray;
+        _settings.Save();
+    }
+
+    private void SuppressRepeatCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing) return;
+
+        var suppress = SuppressRepeatCheckBox.IsChecked ?? true;
+        _settings.SuppressHeldKeyRepeats = suppress;
+        _keyboardHook.SuppressHeldKeyRepeats = suppress;
+        _settings.Save();
+    }
+
+    private void ExitButton_Click(object sender, RoutedEventArgs e)
+    {
+        ExitApplication();
+    }
+
     private void UpdateTrayMenu()
     {
         if (_trayEnabledItem != null)
@@ -497,22 +533,28 @@ public partial class MainWindow : Window
 
     protected override void OnStateChanged(EventArgs e)
     {
-        if (WindowState == WindowState.Minimized)
-        {
-            // minimize to system tray
-            Hide();
-        }
-
+        // Standard Windows behavior: minimizing keeps the window on the Windows Taskbar
+        // without unexpectedly vanishing into the notification area tray.
         base.OnStateChanged(e);
     }
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        if (!_isExiting)
+        if (!_isExiting && _settings.MinimizeToTrayOnClose)
         {
-            // minimize to tray instead of quitting on close
+            // close button minimizes to tray
             e.Cancel = true;
             Hide();
+
+            if (!_hasShownTrayBalloon)
+            {
+                _hasShownTrayBalloon = true;
+                _notifyIcon?.ShowBalloonTip(
+                    2500,
+                    "KeySmash is still active",
+                    "KeySmash is running quietly in your system tray. Double-click the tray icon to reopen, or right-click to Exit.",
+                    Forms.ToolTipIcon.Info);
+            }
             return;
         }
 

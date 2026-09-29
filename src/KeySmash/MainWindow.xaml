@@ -173,8 +173,9 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="keyboard sounds" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextSecondaryBrush}"/>
-                            <TextBlock x:Name="StatusLabel" Text="Enabled" FontSize="15" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}" Margin="0,2,0,0"/>
+                            <TextBlock Text="status" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock x:Name="StatusLabel" Text="Active" FontSize="15" FontWeight="Bold" Foreground="{StaticResource SuccessBrush}" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="StatusDetailLabel" Text="Listening for keystrokes" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,1,0,0"/>
                         </StackPanel>
                         <CheckBox x:Name="EnableToggle" Grid.Column="1" VerticalAlignment="Center"
                                   Style="{StaticResource ModernCheckBox}"
@@ -297,6 +298,16 @@
                                   Style="{StaticResource ModernCheckBox}"
                                   Margin="0,0,0,8"
                                   Checked="StartupCheckBox_Changed" Unchecked="StartupCheckBox_Changed"/>
+                        <CheckBox x:Name="MinimizeToTrayCheckBox"
+                                  Content="minimize to tray on close (X)"
+                                  Style="{StaticResource ModernCheckBox}"
+                                  Margin="0,0,0,8"
+                                  Checked="MinimizeToTrayCheckBox_Changed" Unchecked="MinimizeToTrayCheckBox_Changed"/>
+                        <CheckBox x:Name="SuppressRepeatCheckBox"
+                                  Content="suppress held key repeat (games/editor)"
+                                  Style="{StaticResource ModernCheckBox}"
+                                  Margin="0,0,0,8"
+                                  Checked="SuppressRepeatCheckBox_Changed" Unchecked="SuppressRepeatCheckBox_Changed"/>
                         <TextBlock Text="Quick-mute hotkey: Ctrl + Shift + M"
                                    FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                     </StackPanel>
@@ -308,12 +319,22 @@
         <!-- Footer -->
         <Border Grid.Row="2" Margin="0,12,0,0" Padding="0,8,0,0" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,1,0,0">
             <Grid>
-                <TextBlock x:Name="FooterStatusLabel" Text="Offline • No keys logged"
-                           FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
-                           HorizontalAlignment="Left" VerticalAlignment="Center"/>
-                <TextBlock Text="v1.0"
-                           FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
-                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="FooterStatusLabel" Text="Offline • Standard user (No admin required)"
+                               FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="ExitButton" Content="Exit KeySmash"
+                            Style="{StaticResource ModernButton}"
+                            Padding="8,3" FontSize="11" Margin="0,0,8,0"
+                            Click="ExitButton_Click"
+                            ToolTip="Completely shut down KeySmash and detach all hooks"/>
+                    <TextBlock Text="v1.1" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                </StackPanel>
             </Grid>
         </Border>
     </Grid>

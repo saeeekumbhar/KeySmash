@@ -15,6 +15,8 @@ public sealed class AppSettings
     public string SelectedSoundPack { get; set; } = "Typewriter";
     public bool Randomize { get; set; } = true;
     public bool StartWithWindows { get; set; }
+    public bool MinimizeToTrayOnClose { get; set; } = true;
+    public bool SuppressHeldKeyRepeats { get; set; } = true;
 
     [JsonIgnore]
     public static string SettingsDirectory =>
