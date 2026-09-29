@@ -308,7 +308,8 @@
                                   Style="{StaticResource ModernCheckBox}"
                                   Margin="0,0,0,8"
                                   Checked="SuppressRepeatCheckBox_Changed" Unchecked="SuppressRepeatCheckBox_Changed"/>
-                        <TextBlock Text="Quick-mute hotkey: Ctrl + Shift + M"
+                        <TextBlock x:Name="HotkeyStatusLabel"
+                                   Text="Quick-mute hotkey: Ctrl + Shift + M"
                                    FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </Border>

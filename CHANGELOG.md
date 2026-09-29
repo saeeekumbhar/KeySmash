@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In-app custom sound pack deletion with confirmation dialog.
 - Live sound packs reload and refresh button.
 - Loose audio file discovery and automatic pack grouping in `%LocalAppData%\KeySmash\sounds`.
-- Global quick-mute hotkey: `Ctrl + Shift + M`.
+- Global quick-mute hotkey: `Ctrl + Shift + M` with `MOD_NOREPEAT` support.
+- Hotkey conflict resolution with automatic fallback to `Ctrl + Alt + M` and live UI status display.
 - GitHub Actions CI/CD automation workflow (`.github/workflows/ci.yml`).
 - Application manifest declaring standard user permissions (`asInvoker`) and PerMonitorV2 DPI awareness (zero admin rights required).
 - Asynchronous lock-free Channel queue in `KeyboardHook` isolating Windows message callbacks from audio processing, preventing Windows hook timeout watchdog kills.
@@ -26,10 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit "Exit KeySmash" button in the application footer for 1-click shutdown.
 
 ### Fixed
+- Fixed broken hotkey on Windows startup by guaranteeing window HWND allocation via `EnsureHandle()`, configuring `ShutdownMode.OnExplicitShutdown`, and adding startup retry handling.
 - Fixed window minimization behavior: clicking minimize now minimizes normally to the Windows Taskbar instead of completely vanishing from sight.
 - Fixed volume slider sliding behavior with custom `ModernSlider` control template and `IsMoveToPointEnabled`.
 - Fixed volume slider and mute desynchronization by auto-unmuting on volume increase and auto-muting at 0%.
-- Fixed background startup global hotkey registration race by guaranteeing HWND allocation via `EnsureHandle()`.
 - Added Mute toggle and muted state indicator to the system tray context menu.
 - Lowered keyboard debounce interval from 35ms to 20ms to prevent dropping fast typing rolls.
 - Synchronized "Start KeySmash with Windows" checkbox directly with Windows Registry.

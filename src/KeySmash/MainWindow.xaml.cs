@@ -15,8 +15,10 @@ namespace KeySmash;
 public partial class MainWindow : Window
 {
     private const int MuteHotKeyId = 0x9001;
+    private const uint ModAlt = 0x0001;
     private const uint ModControl = 0x0002;
     private const uint ModShift = 0x0004;
+    private const uint ModNoRepeat = 0x4000;
     private const uint VkM = 0x4D;
 
     private readonly KeyboardHook _keyboardHook = new();
@@ -25,6 +27,8 @@ public partial class MainWindow : Window
     private Forms.NotifyIcon? _notifyIcon;
     private bool _isExiting;
     private bool _isInitializing = true;
+    private bool _isHotKeyRegistered;
+    private string _activeHotKeyDescription = "Ctrl + Shift + M";
 
     // tray menu items for dynamic updates
     private Forms.ToolStripMenuItem? _trayEnabledItem;
@@ -76,13 +80,70 @@ public partial class MainWindow : Window
         try
         {
             var helper = new WindowInteropHelper(this);
-            RegisterHotKey(helper.Handle, MuteHotKeyId, ModControl | ModShift, VkM);
             var source = HwndSource.FromHwnd(helper.Handle);
             source?.AddHook(HwndHook);
+
+            RegisterGlobalHotKey();
         }
         catch
         {
-            // ignore hotkey registration failure if already occupied
+            // ignore hotkey registration failure
+        }
+    }
+
+    private void RegisterGlobalHotKey()
+    {
+        var helper = new WindowInteropHelper(this);
+        if (helper.Handle == nint.Zero)
+            return;
+
+        if (_isHotKeyRegistered)
+        {
+            UnregisterHotKey(helper.Handle, MuteHotKeyId);
+            _isHotKeyRegistered = false;
+        }
+
+        // Try primary hotkey: Ctrl + Shift + M with MOD_NOREPEAT
+        if (RegisterHotKey(helper.Handle, MuteHotKeyId, ModControl | ModShift | ModNoRepeat, VkM))
+        {
+            _isHotKeyRegistered = true;
+            _activeHotKeyDescription = "Ctrl + Shift + M";
+        }
+        // Try fallback hotkey: Ctrl + Alt + M if Ctrl + Shift + M was in use by another app
+        else if (RegisterHotKey(helper.Handle, MuteHotKeyId, ModControl | ModAlt | ModNoRepeat, VkM))
+        {
+            _isHotKeyRegistered = true;
+            _activeHotKeyDescription = "Ctrl + Alt + M (fallback)";
+        }
+        else
+        {
+            _isHotKeyRegistered = false;
+            _activeHotKeyDescription = "Unavailable (conflict)";
+
+            // On Windows startup, shell services may still be registering.
+            // Retry registration after a short delay if it failed initially.
+            Task.Delay(2500).ContinueWith(_ =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (!_isHotKeyRegistered)
+                    {
+                        RegisterGlobalHotKey();
+                    }
+                });
+            });
+        }
+
+        UpdateHotKeyUi();
+    }
+
+    private void UpdateHotKeyUi()
+    {
+        if (HotkeyStatusLabel != null)
+        {
+            HotkeyStatusLabel.Text = _isHotKeyRegistered
+                ? $"Quick-mute hotkey: {_activeHotKeyDescription}"
+                : "Quick-mute hotkey: In use by another app";
         }
     }
 
