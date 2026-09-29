@@ -1,4 +1,5 @@
 using KeySmash.Audio;
+using KeySmash.Keyboard;
 using Xunit;
 
 namespace KeySmash.Tests;
@@ -82,5 +83,39 @@ public class SoundPackTests
 
         Assert.Equal("(built-in)", builtIn.DisplayType);
         Assert.Equal("(custom)", custom.DisplayType);
+    }
+
+    [Fact]
+    public void KeyCategory_ReturnsCategorySpecificSample_WhenAvailable()
+    {
+        var pack = new SoundPack("CustomWithSpace");
+        var generalSample = new CachedSound(new float[] { 0.1f });
+        var spaceSample = new CachedSound(new float[] { 0.9f });
+        var enterSample = new CachedSound(new float[] { 0.5f });
+
+        pack.Samples.Add(generalSample);
+        pack.SpaceSamples.Add(spaceSample);
+        pack.EnterSamples.Add(enterSample);
+
+        var general = pack.GetNextSample(randomize: true, KeyCategory.General);
+        var space = pack.GetNextSample(randomize: true, KeyCategory.Space);
+        var enter = pack.GetNextSample(randomize: true, KeyCategory.Enter);
+
+        Assert.Same(generalSample, general);
+        Assert.Same(spaceSample, space);
+        Assert.Same(enterSample, enter);
+    }
+
+    [Fact]
+    public void KeyCategory_FallsBackToGeneral_WhenCategoryEmpty()
+    {
+        var pack = new SoundPack("FallbackPack");
+        var generalSample = new CachedSound(new float[] { 0.1f });
+        pack.Samples.Add(generalSample);
+
+        // No space sample added; should gracefully fall back to general
+        var sample = pack.GetNextSample(randomize: true, KeyCategory.Space);
+
+        Assert.Same(generalSample, sample);
     }
 }

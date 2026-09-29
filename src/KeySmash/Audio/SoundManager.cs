@@ -1,5 +1,9 @@
+using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using KeySmash.Keyboard;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -13,6 +17,7 @@ public sealed class SoundManager : IDisposable
     private float _masterVolume = 0.75f;
     private bool _isMuted;
     private readonly object _lock = new();
+    private long _lastRecoverAttempt;
 
     public List<SoundPack> SoundPacks { get; } = new();
     public SoundPack? SelectedPack { get; set; }
@@ -67,16 +72,29 @@ public sealed class SoundManager : IDisposable
                 _outputDevice?.Dispose();
                 _outputDevice = null;
 
-                var waveOut = new WaveOutEvent
+                try
                 {
-                    DesiredLatency = 50,
-                    NumberOfBuffers = 2
-                };
+                    // Ultra-low latency event-driven WASAPI (<15ms)
+                    var wasapi = new WasapiOut(AudioClientShareMode.Shared, useEventSync: true, latency: 15);
+                    wasapi.PlaybackStopped += OnPlaybackStopped;
+                    wasapi.Init(_volumeProvider);
+                    wasapi.Play();
+                    _outputDevice = wasapi;
+                }
+                catch
+                {
+                    // Fall back to WaveOutEvent if WASAPI is restricted or unavailable
+                    var waveOut = new WaveOutEvent
+                    {
+                        DesiredLatency = 40,
+                        NumberOfBuffers = 2
+                    };
+                    waveOut.PlaybackStopped += OnPlaybackStopped;
+                    waveOut.Init(_volumeProvider);
+                    waveOut.Play();
+                    _outputDevice = waveOut;
+                }
 
-                waveOut.Init(_volumeProvider);
-                waveOut.Play();
-
-                _outputDevice = waveOut;
                 IsAudioReady = true;
                 AudioErrorMessage = null;
             }
@@ -90,30 +108,50 @@ public sealed class SoundManager : IDisposable
         }
     }
 
+    private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
+    {
+        if (e.Exception != null)
+        {
+            // Auto-recover if audio endpoint disconnected (e.g. headphones unplugged)
+            Task.Run(RecoverAudioDevice);
+        }
+    }
+
+    public void RecoverAudioDevice()
+    {
+        var now = Stopwatch.GetTimestamp();
+        var elapsedSec = (now - _lastRecoverAttempt) / (double)Stopwatch.Frequency;
+        if (elapsedSec < 1.0)
+            return;
+
+        _lastRecoverAttempt = now;
+        InitializeDevice();
+    }
+
     private void UpdateEffectiveVolume()
     {
         _volumeProvider.Volume = _isMuted ? 0f : _masterVolume;
     }
 
-    public void PlayKeySound()
+    public void PlayKeySound(KeyCategory category = KeyCategory.General)
     {
         if (_isMuted || SelectedPack == null || !IsAudioReady)
             return;
 
-        var sample = SelectedPack.GetNextSample(Randomize);
+        var sample = SelectedPack.GetNextSample(Randomize, category);
         if (sample == null)
             return;
 
         PlaySample(sample);
     }
 
-    public void PreviewSound(SoundPack? pack = null)
+    public void PreviewSound(SoundPack? pack = null, KeyCategory category = KeyCategory.General)
     {
         var targetPack = pack ?? SelectedPack;
         if (targetPack == null)
             return;
 
-        var sample = targetPack.GetNextSample(Randomize);
+        var sample = targetPack.GetNextSample(Randomize, category);
         if (sample == null)
             return;
 
@@ -131,7 +169,14 @@ public sealed class SoundManager : IDisposable
             if (_mixer.MixerInputs.Count() > 16)
                 return;
 
-            _mixer.AddMixerInput(new CachedSoundSampleProvider(sample));
+            try
+            {
+                _mixer.AddMixerInput(new CachedSoundSampleProvider(sample));
+            }
+            catch (Exception)
+            {
+                Task.Run(RecoverAudioDevice);
+            }
         }
     }
 
@@ -144,7 +189,7 @@ public sealed class SoundManager : IDisposable
         {
             var packName = Path.GetFileName(subDir);
             var pack = LoadPackFromFolder(subDir, packName, isBuiltIn);
-            if (pack != null && pack.Samples.Count > 0)
+            if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
             {
                 // remove existing with same name if reloading
                 SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
@@ -152,7 +197,30 @@ public sealed class SoundManager : IDisposable
             }
         }
 
-        // sort built-ins first, then user packs
+        // Support loose audio files directly in directoryPath (e.g. user dropped files into sounds folder)
+        if (!isBuiltIn)
+        {
+            var looseFiles = Directory.GetFiles(directoryPath, "*.wav")
+                .Concat(Directory.GetFiles(directoryPath, "*.mp3"))
+                .ToList();
+
+            if (looseFiles.Count > 0)
+            {
+                var loosePack = LoadPackFromFolder(directoryPath, "Custom Sounds", isBuiltIn: false);
+                if (loosePack != null && (loosePack.Samples.Count > 0 || loosePack.SpaceSamples.Count > 0))
+                {
+                    SoundPacks.RemoveAll(p => string.Equals(p.Name, loosePack.Name, StringComparison.OrdinalIgnoreCase));
+                    SoundPacks.Add(loosePack);
+                }
+            }
+        }
+
+        SortPacks();
+    }
+
+    private void SortPacks()
+    {
+        // sort built-ins first, then custom packs alphabetically
         SoundPacks.Sort((a, b) =>
         {
             if (a.IsBuiltIn != b.IsBuiltIn)
@@ -179,13 +247,45 @@ public sealed class SoundManager : IDisposable
             try
             {
                 var cached = new CachedSound(file);
-                if (cached.AudioData.Length > 0)
+                if (cached.AudioData.Length == 0)
+                    continue;
+
+                var fileName = Path.GetFileNameWithoutExtension(file);
+
+                if (fileName.StartsWith("space", StringComparison.OrdinalIgnoreCase))
+                {
+                    pack.SpaceSamples.Add(cached);
+                }
+                else if (fileName.StartsWith("enter", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.StartsWith("return", StringComparison.OrdinalIgnoreCase))
+                {
+                    pack.EnterSamples.Add(cached);
+                }
+                else if (fileName.StartsWith("backspace", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.StartsWith("delete", StringComparison.OrdinalIgnoreCase))
+                {
+                    pack.BackspaceSamples.Add(cached);
+                }
+                else
+                {
                     pack.Samples.Add(cached);
+                }
             }
             catch
             {
                 // skip corrupted or unreadable audio files gracefully
             }
+        }
+
+        // If only special samples were loaded, ensure at least one general fallback exists
+        if (pack.Samples.Count == 0)
+        {
+            var fallback = pack.SpaceSamples.FirstOrDefault()
+                ?? pack.EnterSamples.FirstOrDefault()
+                ?? pack.BackspaceSamples.FirstOrDefault();
+            if (fallback != null)
+                pack.Samples.Add(fallback);
         }
 
         return pack;
@@ -213,10 +313,11 @@ public sealed class SoundManager : IDisposable
             File.Copy(sourceFilePath, destPath, overwrite: true);
 
             var pack = LoadPackFromFolder(packDir, packName, isBuiltIn: false);
-            if (pack != null && pack.Samples.Count > 0)
+            if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
             {
                 SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
                 SoundPacks.Add(pack);
+                SortPacks();
                 SelectedPack = pack;
                 return true;
             }
@@ -227,6 +328,64 @@ public sealed class SoundManager : IDisposable
         }
 
         return false;
+    }
+
+    public bool ImportCustomZip(string zipFilePath, string targetBaseDir)
+    {
+        if (!File.Exists(zipFilePath))
+            return false;
+
+        try
+        {
+            var packName = Path.GetFileNameWithoutExtension(zipFilePath);
+            var packDir = Path.Combine(targetBaseDir, packName);
+            Directory.CreateDirectory(packDir);
+
+            ZipFile.ExtractToDirectory(zipFilePath, packDir, overwriteFiles: true);
+
+            var pack = LoadPackFromFolder(packDir, packName, isBuiltIn: false);
+            if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
+            {
+                SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
+                SoundPacks.Add(pack);
+                SortPacks();
+                SelectedPack = pack;
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    public bool DeleteCustomPack(SoundPack pack)
+    {
+        if (pack.IsBuiltIn || string.IsNullOrEmpty(pack.DirectoryPath))
+            return false;
+
+        try
+        {
+            if (Directory.Exists(pack.DirectoryPath))
+            {
+                Directory.Delete(pack.DirectoryPath, recursive: true);
+            }
+
+            SoundPacks.Remove(pack);
+
+            if (SelectedPack == pack)
+            {
+                SelectedPack = SoundPacks.FirstOrDefault();
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Dispose()

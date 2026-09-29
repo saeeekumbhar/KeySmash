@@ -9,13 +9,16 @@ KeySmash is a lightweight Windows desktop utility that plays custom sound effect
 ## Features
 
 * **Universal Keyboard Support**: Works automatically with laptop keyboards, USB keyboards, Bluetooth keyboards, mechanical switches, and multiple connected keyboards.
-* **Low Latency Audio**: Sounds are preloaded and cached in memory using NAudio for instant response without audio lag.
-* **Multi-Sample Sound Packs**: Supports sound packs with multiple samples and non-repeating random selection so typing feels dynamic.
+* **Ultra-Low Latency WASAPI Audio**: Event-driven WASAPI audio output delivers sub-15ms response times with automatic fallback to WaveOut and dynamic audio endpoint hotplug recovery.
+* **Realistic Per-Key Acoustics**: Distinct, authentic audio samples for Spacebar (stabilizer thock), Enter (return clunk / bell), and Backspace (spring snap), alongside general typing keys.
+* **Global Quick-Mute Hotkey**: Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd> anywhere in Windows to instantly mute or unmute audio feedback.
+* **Multi-Sample Sound Packs**: Supports sound packs with multiple samples and non-repeating random selection so typing feels organic and dynamic.
 * **Built-in Sound Packs**: Includes original, copyright-free sound packs out of the box (`Typewriter`, `Mechanical`, `Bubble`, and `Shotgun`).
-* **Custom Sound Import**: Import your own `.wav` or `.mp3` files directly with `+ add sound`.
-* **Volume & Mute Control**: Master volume slider with mute toggle and sound preview button.
+* **Sound Pack Management**: Import individual audio files (`.wav`, `.mp3`) or bundled sound packs (`.zip`), auto-detect loose sound files, and delete custom packs directly from the UI.
+* **Volume & Mute Control**: Fluid, draggable master volume slider synchronized with mute states and system tray controls.
+* **Single-Instance Bring-to-Front**: Duplicate launches seamlessly focus the existing window instead of creating duplicate background processes.
 * **System Tray Operation**: Minimizes to the notification tray to stay out of your way while typing.
-* **Optional Windows Startup**: Start automatically when Windows boots (optional, disabled by default).
+* **Optional Windows Startup**: Start automatically when Windows boots with live registry synchronization.
 * **Strict Privacy**: Discards keyboard events immediately after triggering audio. Zero keylogging, zero telemetry, 100% offline.
 
 ---
@@ -134,7 +137,7 @@ See [SECURITY.md](SECURITY.md) for full details.
   * Check the volume slider and make sure you are not muted.
   * Verify your Windows default audio playback device is active.
 * **Sound cutting off or distorted?**
-  * KeySmash includes a built-in rate limiter (35ms threshold) to prevent buffer overflows when holding keys down.
+  * KeySmash includes a built-in rate limiter (20ms threshold) to prevent buffer overflows when holding keys down while supporting ultra-fast typing bursts.
 * **Application closes instead of minimizing?**
   * Closing or minimizing the window sends KeySmash to the system tray. Use the tray icon's context menu to reopen or fully exit the app.
 

@@ -96,5 +96,43 @@ public class SoundManagerTests
         Assert.NotEmpty(manager.SoundPacks);
         Assert.Contains(manager.SoundPacks, p => p.Name == "Typewriter");
         Assert.Contains(manager.SoundPacks, p => p.Name == "Mechanical");
+
+        var typewriter = manager.SoundPacks.First(p => p.Name == "Typewriter");
+        Assert.NotEmpty(typewriter.SpaceSamples);
+        Assert.NotEmpty(typewriter.EnterSamples);
+        Assert.NotEmpty(typewriter.BackspaceSamples);
+    }
+
+    [Fact]
+    public void DeleteCustomPack_DeletesFolderAndRemovesFromList()
+    {
+        using var manager = new SoundManager();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"pack_del_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        File.WriteAllText(Path.Combine(tempDir, "dummy.wav"), "not a real wav");
+
+        var pack = new SoundPack("CustomToDelete", tempDir, isBuiltIn: false);
+        manager.SoundPacks.Add(pack);
+        manager.SelectedPack = pack;
+
+        var deleted = manager.DeleteCustomPack(pack);
+
+        Assert.True(deleted);
+        Assert.False(Directory.Exists(tempDir));
+        Assert.DoesNotContain(pack, manager.SoundPacks);
+    }
+
+    [Fact]
+    public void DeleteCustomPack_PreventsDeletingBuiltInPacks()
+    {
+        using var manager = new SoundManager();
+        var builtIn = new SoundPack("BuiltIn", "some/path", isBuiltIn: true);
+        manager.SoundPacks.Add(builtIn);
+
+        var deleted = manager.DeleteCustomPack(builtIn);
+
+        Assert.False(deleted);
+        Assert.Contains(builtIn, manager.SoundPacks);
     }
 }

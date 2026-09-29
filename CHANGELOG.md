@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-29
+
+### Added
+- Ultra-low latency event-driven WASAPI audio output engine (<15ms) with automatic fallback to WaveOut.
+- Key categorization system classifying Spacebar, Enter, and Backspace for distinct tactile sound effects without keystroke logging.
+- Synthesized dedicated audio samples (Space, Enter, Backspace) for all built-in sound packs (`Typewriter`, `Mechanical`, `Bubble`, `Shotgun`).
+- Single-instance IPC activation: launching a duplicate instance signals the running instance and brings its window to the foreground.
+- Automatic audio device hotplug recovery when headphones/audio endpoints are connected or disconnected.
+- ZIP sound pack and multi-sample archive importer.
+- In-app custom sound pack deletion with confirmation dialog.
+- Live sound packs reload and refresh button.
+- Loose audio file discovery and automatic pack grouping in `%LocalAppData%\KeySmash\sounds`.
+- Global quick-mute hotkey: `Ctrl + Shift + M`.
+- GitHub Actions CI/CD automation workflow (`.github/workflows/ci.yml`).
+
+### Fixed
+- Fixed volume slider sliding behavior with custom `ModernSlider` control template and `IsMoveToPointEnabled`.
+- Fixed volume slider and mute desynchronization by auto-unmuting on volume increase and auto-muting at 0%.
+- Added Mute toggle and muted state indicator to the system tray context menu.
+- Lowered keyboard debounce interval from 35ms to 20ms to prevent dropping fast typing rolls.
+- Synchronized "Start KeySmash with Windows" checkbox directly with Windows Registry.
+
 ## [1.0.0] - 2026-09-28
 
 ### Added

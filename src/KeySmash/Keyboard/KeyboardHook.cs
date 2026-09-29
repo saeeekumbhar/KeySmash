@@ -14,9 +14,9 @@ public sealed class KeyboardHook : IDisposable
     private readonly HookProc _proc;
     private nint _hookId = nint.Zero;
     private long _lastPressTimestamp;
-    private int _minIntervalMs = 35;
+    private int _minIntervalMs = 20;
 
-    public event Action? KeyPressed;
+    public event Action<KeyCategory>? KeyPressed;
 
     public bool IsActive => _hookId != nint.Zero;
 
@@ -65,8 +65,17 @@ public sealed class KeyboardHook : IDisposable
             {
                 _lastPressTimestamp = now;
 
-                // trigger audio and immediately discard event info - no key identity stored
-                KeyPressed?.Invoke();
+                // determine category for distinct audio - never store, buffer, or log key identity
+                var vkCode = (uint)Marshal.ReadInt32(lParam);
+                var category = vkCode switch
+                {
+                    0x20 => KeyCategory.Space,
+                    0x0D => KeyCategory.Enter,
+                    0x08 => KeyCategory.Backspace,
+                    _ => KeyCategory.General
+                };
+
+                KeyPressed?.Invoke(category);
             }
         }
 

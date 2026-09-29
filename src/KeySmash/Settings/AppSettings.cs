@@ -68,6 +68,19 @@ public sealed class AppSettings
         }
     }
 
+    public static bool IsStartupRegistered()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RegistryRunKey, writable: false);
+            return key?.GetValue(AppName) != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static void SetStartupRegistration(bool enable)
     {
         try

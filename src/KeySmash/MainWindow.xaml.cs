@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using KeySmash.Audio;
 using KeySmash.Keyboard;
@@ -12,6 +14,11 @@ namespace KeySmash;
 
 public partial class MainWindow : Window
 {
+    private const int MuteHotKeyId = 0x9001;
+    private const uint ModControl = 0x0002;
+    private const uint ModShift = 0x0004;
+    private const uint VkM = 0x4D;
+
     private readonly KeyboardHook _keyboardHook = new();
     private readonly SoundManager _soundManager = new();
     private readonly AppSettings _settings;
@@ -21,6 +28,7 @@ public partial class MainWindow : Window
 
     // tray menu items for dynamic updates
     private Forms.ToolStripMenuItem? _trayEnabledItem;
+    private Forms.ToolStripMenuItem? _trayMuteItem;
     private Forms.ToolStripMenuItem? _traySoundItem;
     private Forms.ToolStripMenuItem? _trayVolumeItem;
 
@@ -53,6 +61,34 @@ public partial class MainWindow : Window
             _keyboardHook.Start();
 
         _isInitializing = false;
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        try
+        {
+            var helper = new WindowInteropHelper(this);
+            RegisterHotKey(helper.Handle, MuteHotKeyId, ModControl | ModShift, VkM);
+            var source = HwndSource.FromHwnd(helper.Handle);
+            source?.AddHook(HwndHook);
+        }
+        catch
+        {
+            // ignore hotkey registration failure if already occupied
+        }
+    }
+
+    private nint HwndHook(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        const int WmHotkey = 0x0312;
+        if (msg == WmHotkey && wParam.ToInt32() == MuteHotKeyId)
+        {
+            ToggleMute();
+            handled = true;
+        }
+        return nint.Zero;
     }
 
     private void InitializeAudio()
@@ -119,13 +155,18 @@ public partial class MainWindow : Window
             CheckOnClick = false
         };
 
+        _trayMuteItem = new Forms.ToolStripMenuItem(_soundManager.IsMuted ? "Unmute" : "Mute", null, (s, e) =>
+        {
+            Dispatcher.Invoke(ToggleMute);
+        });
+
         _traySoundItem = new Forms.ToolStripMenuItem($"Sound: {_soundManager.SelectedPack?.Name ?? "None"}")
         {
             Enabled = false
         };
 
         var volPct = (int)Math.Round(_soundManager.MasterVolume * 100);
-        _trayVolumeItem = new Forms.ToolStripMenuItem($"Volume: {volPct}%")
+        _trayVolumeItem = new Forms.ToolStripMenuItem(_soundManager.IsMuted ? $"Volume: {volPct}% (Muted)" : $"Volume: {volPct}%")
         {
             Enabled = false
         };
@@ -135,6 +176,7 @@ public partial class MainWindow : Window
 
         contextMenu.Items.Add(titleItem);
         contextMenu.Items.Add(_trayEnabledItem);
+        contextMenu.Items.Add(_trayMuteItem);
         contextMenu.Items.Add(new Forms.ToolStripSeparator());
         contextMenu.Items.Add(_traySoundItem);
         contextMenu.Items.Add(_trayVolumeItem);
@@ -160,18 +202,19 @@ public partial class MainWindow : Window
 
         SoundPackCombo.ItemsSource = _soundManager.SoundPacks;
         SoundPackCombo.SelectedItem = _soundManager.SelectedPack;
+        DeletePackButton.IsEnabled = _soundManager.SelectedPack is { IsBuiltIn: false };
 
         VolumeSlider.Value = Math.Round(_settings.MasterVolume * 100);
         VolumeValueLabel.Text = $"{(int)VolumeSlider.Value}%";
 
         RandomizeCheckBox.IsChecked = _settings.Randomize;
-        StartupCheckBox.IsChecked = _settings.StartWithWindows;
+        StartupCheckBox.IsChecked = AppSettings.IsStartupRegistered();
     }
 
-    private void OnKeyPressed()
+    private void OnKeyPressed(KeyCategory category)
     {
-        // low-latency audio trigger on keystroke
-        _soundManager.PlayKeySound();
+        // low-latency audio trigger on keystroke with key-specific realism
+        _soundManager.PlayKeySound(category);
     }
 
     private void EnableToggle_Checked(object sender, RoutedEventArgs e)
@@ -222,6 +265,7 @@ public partial class MainWindow : Window
             _settings.SelectedSoundPack = pack.Name;
             _settings.Save();
 
+            DeletePackButton.IsEnabled = !pack.IsBuiltIn;
             UpdateTrayMenu();
         }
     }
@@ -229,20 +273,49 @@ public partial class MainWindow : Window
     private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
         var volPct = (int)Math.Round(e.NewValue);
-        if (VolumeValueLabel != null)
-            VolumeValueLabel.Text = $"{volPct}%";
 
-        if (_isInitializing) return;
+        if (_isInitializing)
+        {
+            if (VolumeValueLabel != null)
+                VolumeValueLabel.Text = $"{volPct}%";
+            return;
+        }
 
         var volFraction = (float)(volPct / 100.0);
         _soundManager.MasterVolume = volFraction;
         _settings.MasterVolume = volFraction;
-        _settings.Save();
 
+        // Auto-unmute when the user increases volume while muted
+        if (_soundManager.IsMuted && volPct > 0)
+        {
+            _soundManager.IsMuted = false;
+            MuteButton.Content = "Mute";
+            if (VolumeValueLabel != null)
+                VolumeValueLabel.Text = $"{volPct}%";
+        }
+        else if (volPct == 0 && !_soundManager.IsMuted)
+        {
+            _soundManager.IsMuted = true;
+            MuteButton.Content = "Unmute";
+            if (VolumeValueLabel != null)
+                VolumeValueLabel.Text = "Muted";
+        }
+        else if (_soundManager.IsMuted)
+        {
+            if (VolumeValueLabel != null)
+                VolumeValueLabel.Text = "Muted";
+        }
+        else
+        {
+            if (VolumeValueLabel != null)
+                VolumeValueLabel.Text = $"{volPct}%";
+        }
+
+        _settings.Save();
         UpdateTrayMenu();
     }
 
-    private void MuteButton_Click(object sender, RoutedEventArgs e)
+    private void ToggleMute()
     {
         _soundManager.IsMuted = !_soundManager.IsMuted;
 
@@ -253,9 +326,21 @@ public partial class MainWindow : Window
         }
         else
         {
+            // If volume was zero when unmuting, bump to default audible level
+            if (VolumeSlider.Value < 5)
+            {
+                VolumeSlider.Value = 25;
+            }
             MuteButton.Content = "Mute";
             VolumeValueLabel.Text = $"{(int)VolumeSlider.Value}%";
         }
+
+        UpdateTrayMenu();
+    }
+
+    private void MuteButton_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleMute();
     }
 
     private void RandomizeCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -277,31 +362,72 @@ public partial class MainWindow : Window
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "Import Custom Sound File",
-            Filter = "Audio Files (*.wav;*.mp3)|*.wav;*.mp3|WAV Files (*.wav)|*.wav|MP3 Files (*.mp3)|*.mp3|All Files (*.*)|*.*",
+            Title = "Import Custom Sound File or ZIP Sound Pack",
+            Filter = "Supported Formats (*.wav;*.mp3;*.zip)|*.wav;*.mp3;*.zip|Audio Files (*.wav;*.mp3)|*.wav;*.mp3|ZIP Archives (*.zip)|*.zip|All Files (*.*)|*.*",
             Multiselect = false
         };
 
         if (dialog.ShowDialog() == true)
         {
-            var fileName = Path.GetFileNameWithoutExtension(dialog.FileName);
-            var packName = char.ToUpper(fileName[0]) + (fileName.Length > 1 ? fileName[1..] : "");
+            var ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
+            bool imported;
+            string packName;
 
-            var imported = _soundManager.ImportCustomSoundFile(dialog.FileName, packName, AppSettings.UserSoundsDirectory);
+            if (ext == ".zip")
+            {
+                packName = Path.GetFileNameWithoutExtension(dialog.FileName);
+                imported = _soundManager.ImportCustomZip(dialog.FileName, AppSettings.UserSoundsDirectory);
+            }
+            else
+            {
+                var fileName = Path.GetFileNameWithoutExtension(dialog.FileName);
+                packName = char.ToUpper(fileName[0]) + (fileName.Length > 1 ? fileName[1..] : "");
+                imported = _soundManager.ImportCustomSoundFile(dialog.FileName, packName, AppSettings.UserSoundsDirectory);
+            }
+
             if (imported)
             {
-                // refresh combo items
-                SoundPackCombo.ItemsSource = null;
-                SoundPackCombo.ItemsSource = _soundManager.SoundPacks;
-                SoundPackCombo.SelectedItem = _soundManager.SelectedPack;
-
+                RefreshSoundPackList();
                 MessageBox.Show($"Imported sound pack '{packName}' successfully.", "KeySmash", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {
-                MessageBox.Show("Could not import audio file. Please check that the file is a valid audio format.", "KeySmash", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Could not import sound file. Please verify that the audio file or ZIP is valid.", "KeySmash", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
+    }
+
+    private void DeletePackButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_soundManager.SelectedPack is not { IsBuiltIn: false } pack)
+        {
+            MessageBox.Show("Built-in sound packs cannot be deleted.", "KeySmash", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var result = MessageBox.Show($"Are you sure you want to delete the sound pack '{pack.Name}'?", "KeySmash", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (result == MessageBoxResult.Yes)
+        {
+            _soundManager.DeleteCustomPack(pack);
+            RefreshSoundPackList();
+            UpdateTrayMenu();
+        }
+    }
+
+    private void RefreshPacksButton_Click(object sender, RoutedEventArgs e)
+    {
+        InitializeAudio();
+        RefreshSoundPackList();
+        UpdateTrayMenu();
+        MessageBox.Show("Sound packs refreshed from disk.", "KeySmash", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void RefreshSoundPackList()
+    {
+        SoundPackCombo.ItemsSource = null;
+        SoundPackCombo.ItemsSource = _soundManager.SoundPacks;
+        SoundPackCombo.SelectedItem = _soundManager.SelectedPack;
+        DeletePackButton.IsEnabled = _soundManager.SelectedPack is { IsBuiltIn: false };
     }
 
     private void OpenFolderButton_Click(object sender, RoutedEventArgs e)
@@ -338,21 +464,29 @@ public partial class MainWindow : Window
         if (_trayEnabledItem != null)
             _trayEnabledItem.Checked = _settings.Enabled;
 
+        if (_trayMuteItem != null)
+            _trayMuteItem.Text = _soundManager.IsMuted ? "Unmute" : "Mute";
+
         if (_traySoundItem != null)
             _traySoundItem.Text = $"Sound: {_soundManager.SelectedPack?.Name ?? "None"}";
 
         if (_trayVolumeItem != null)
         {
             var volPct = (int)Math.Round(_soundManager.MasterVolume * 100);
-            _trayVolumeItem.Text = $"Volume: {volPct}%";
+            _trayVolumeItem.Text = _soundManager.IsMuted
+                ? $"Volume: {volPct}% (Muted)"
+                : $"Volume: {volPct}%";
         }
     }
 
-    private void RestoreFromTray()
+    public void RestoreFromTray()
     {
         Show();
         WindowState = WindowState.Normal;
         Activate();
+        Topmost = true;
+        Topmost = false;
+        Focus();
     }
 
     private void ExitApplication()
@@ -382,6 +516,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        try
+        {
+            var helper = new WindowInteropHelper(this);
+            UnregisterHotKey(helper.Handle, MuteHotKeyId);
+        }
+        catch
+        {
+            // ignore hotkey cleanup errors
+        }
+
         // clean shutdown
         _keyboardHook.Stop();
         _keyboardHook.Dispose();
@@ -397,4 +541,10 @@ public partial class MainWindow : Window
 
         base.OnClosing(e);
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnregisterHotKey(nint hWnd, int id);
 }
