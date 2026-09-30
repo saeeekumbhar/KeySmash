@@ -44,13 +44,16 @@ public sealed class CachedSound
 public sealed class CachedSoundSampleProvider : ISampleProvider
 {
     private readonly CachedSound _cachedSound;
+    private readonly Action? _onCompleted;
     private long _position;
+    private int _completedReported;
 
     public WaveFormat WaveFormat => _cachedSound.WaveFormat;
 
-    public CachedSoundSampleProvider(CachedSound cachedSound)
+    public CachedSoundSampleProvider(CachedSound cachedSound, Action? onCompleted = null)
     {
         _cachedSound = cachedSound;
+        _onCompleted = onCompleted;
     }
 
     public int Read(float[] buffer, int offset, int count)
@@ -59,11 +62,27 @@ public sealed class CachedSoundSampleProvider : ISampleProvider
         var samplesToCopy = Math.Min(availableSamples, count);
 
         if (samplesToCopy <= 0)
+        {
+            NotifyCompleted();
             return 0;
+        }
 
         Array.Copy(_cachedSound.AudioData, _position, buffer, offset, samplesToCopy);
         _position += samplesToCopy;
 
+        if (_position >= _cachedSound.AudioData.Length)
+        {
+            NotifyCompleted();
+        }
+
         return (int)samplesToCopy;
+    }
+
+    private void NotifyCompleted()
+    {
+        if (Interlocked.Exchange(ref _completedReported, 1) == 0)
+        {
+            _onCompleted?.Invoke();
+        }
     }
 }

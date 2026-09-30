@@ -13,7 +13,7 @@ using Forms = System.Windows.Forms;
 
 namespace KeySmash;
 
-public partial class MainWindow : Window
+public partial class MainWindow : Window, IDisposable
 {
     private const int MuteHotKeyId = 0x9001;
     private const uint ModAlt = 0x0001;
@@ -141,13 +141,21 @@ public partial class MainWindow : Window
             // Retry registration after a short delay if it failed initially.
             Task.Delay(2500).ContinueWith(_ =>
             {
-                Dispatcher.Invoke(() =>
+                try
                 {
-                    if (!_isHotKeyRegistered)
+                    if (_isCleanedUp || _isExiting) return;
+                    Dispatcher.Invoke(() =>
                     {
-                        RegisterGlobalHotKey();
-                    }
-                });
+                        if (!_isCleanedUp && !_isExiting && !_isHotKeyRegistered)
+                        {
+                            RegisterGlobalHotKey();
+                        }
+                    });
+                }
+                catch
+                {
+                    // ignore if dispatcher is shutting down
+                }
             });
         }
 
@@ -609,6 +617,40 @@ public partial class MainWindow : Window
         Focus();
     }
 
+    public void PrepareForShutdown()
+    {
+        _isExiting = true;
+        CleanupResources();
+    }
+
+    public void Dispose()
+    {
+        if (Dispatcher.CheckAccess())
+        {
+            _isExiting = true;
+            CleanupResources();
+            try
+            {
+                Close();
+            }
+            catch
+            {
+                // ignore if already closed
+            }
+        }
+        else
+        {
+            try
+            {
+                Dispatcher.Invoke(Dispose);
+            }
+            catch
+            {
+                // ignore if dispatcher unavailable
+            }
+        }
+    }
+
     private void ExitApplication()
     {
         _isExiting = true;
@@ -650,15 +692,17 @@ public partial class MainWindow : Window
 
     private void OnSessionEnding(object? sender, SessionEndingEventArgs e)
     {
+        _isExiting = true;
         CleanupResources();
     }
 
     private void OnProcessExit(object? sender, EventArgs e)
     {
+        _isExiting = true;
         CleanupResources();
     }
 
-    private void CleanupResources()
+    public void CleanupResources()
     {
         lock (_cleanupLock)
         {

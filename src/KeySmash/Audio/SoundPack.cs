@@ -4,7 +4,6 @@ namespace KeySmash.Audio;
 
 public sealed class SoundPack
 {
-    private readonly Random _random = new();
     private int _lastSampleIndex = -1;
     private int _lastSpaceIndex = -1;
     private int _lastEnterIndex = -1;
@@ -73,7 +72,7 @@ public sealed class SoundPack
         {
             do
             {
-                nextIndex = _random.Next(targetList.Count);
+                nextIndex = Random.Shared.Next(targetList.Count);
             } while (nextIndex == lastIdx);
         }
         else

@@ -18,6 +18,8 @@ public sealed class SoundManager : IDisposable
     private bool _isMuted;
     private readonly object _lock = new();
     private long _lastRecoverAttempt;
+    private int _activeVoices;
+    private const int MaxConcurrentVoices = 16;
 
     public List<SoundPack> SoundPacks { get; } = new();
     public SoundPack? SelectedPack { get; set; }
@@ -68,6 +70,9 @@ public sealed class SoundManager : IDisposable
         {
             try
             {
+                Interlocked.Exchange(ref _activeVoices, 0);
+                try { _mixer.RemoveAllMixerInputs(); } catch { }
+
                 _outputDevice?.Stop();
                 _outputDevice?.Dispose();
                 _outputDevice = null;
@@ -162,19 +167,25 @@ public sealed class SoundManager : IDisposable
     {
         lock (_lock)
         {
-            if (_outputDevice == null)
+            if (_outputDevice == null || !IsAudioReady)
                 return;
 
             // clamp concurrent inputs to avoid clipping and high memory churn
-            if (_mixer.MixerInputs.Count() > 16)
+            if (Volatile.Read(ref _activeVoices) >= MaxConcurrentVoices)
                 return;
 
             try
             {
-                _mixer.AddMixerInput(new CachedSoundSampleProvider(sample));
+                Interlocked.Increment(ref _activeVoices);
+                var provider = new CachedSoundSampleProvider(sample, () =>
+                {
+                    Interlocked.Decrement(ref _activeVoices);
+                });
+                _mixer.AddMixerInput(provider);
             }
             catch (Exception)
             {
+                Interlocked.Decrement(ref _activeVoices);
                 Task.Run(RecoverAudioDevice);
             }
         }
@@ -392,6 +403,9 @@ public sealed class SoundManager : IDisposable
     {
         lock (_lock)
         {
+            Interlocked.Exchange(ref _activeVoices, 0);
+            try { _mixer.RemoveAllMixerInputs(); } catch { }
+
             try
             {
                 _outputDevice?.Stop();

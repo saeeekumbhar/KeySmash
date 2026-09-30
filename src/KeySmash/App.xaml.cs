@@ -18,7 +18,16 @@ public partial class App : Application
     {
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
-        _instanceMutex = new Mutex(true, MutexName, out bool isNewInstance);
+        bool isNewInstance;
+        try
+        {
+            _instanceMutex = new Mutex(true, MutexName, out isNewInstance);
+        }
+        catch (AbandonedMutexException)
+        {
+            // Previous instance crashed or was killed; we take ownership safely
+            isNewInstance = true;
+        }
 
         if (!isNewInstance)
         {
@@ -110,8 +119,22 @@ public partial class App : Application
         }
     }
 
+    protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+    {
+        if (MainWindow is MainWindow mw)
+        {
+            mw.PrepareForShutdown();
+        }
+        base.OnSessionEnding(e);
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
+        if (MainWindow is MainWindow mw)
+        {
+            mw.PrepareForShutdown();
+        }
+
         _showEventHandle?.Dispose();
 
         if (_instanceMutex != null)

@@ -135,4 +135,20 @@ public class SoundManagerTests
         Assert.False(deleted);
         Assert.Contains(builtIn, manager.SoundPacks);
     }
+
+    [Fact]
+    public void PlayKeySound_UnderHighConcurrency_DoesNotThrow()
+    {
+        using var manager = new SoundManager();
+        var pack = new SoundPack("StressPack");
+        pack.Samples.Add(new CachedSound(new float[4410])); // 0.1s sample
+        manager.SoundPacks.Add(pack);
+        manager.SelectedPack = pack;
+
+        // rapidly trigger 100 key sounds across parallel threads
+        Parallel.For(0, 100, _ =>
+        {
+            manager.PlayKeySound();
+        });
+    }
 }
