@@ -479,13 +479,25 @@ public partial class MainWindow : Window, IDisposable
 
             if (ext == ".zip")
             {
-                packName = Path.GetFileNameWithoutExtension(dialog.FileName);
+                var rawName = Path.GetFileNameWithoutExtension(dialog.FileName)?.Trim();
+                var invalidChars = Path.GetInvalidFileNameChars();
+                packName = !string.IsNullOrWhiteSpace(rawName)
+                    ? string.Concat(rawName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries))
+                    : "CustomPack";
+                if (string.IsNullOrWhiteSpace(packName)) packName = "CustomPack";
+
                 imported = _soundManager.ImportCustomZip(dialog.FileName, AppSettings.UserSoundsDirectory);
             }
             else
             {
-                var fileName = Path.GetFileNameWithoutExtension(dialog.FileName);
-                packName = char.ToUpper(fileName[0]) + (fileName.Length > 1 ? fileName[1..] : "");
+                var rawName = Path.GetFileNameWithoutExtension(dialog.FileName)?.Trim();
+                var invalidChars = Path.GetInvalidFileNameChars();
+                var cleanName = !string.IsNullOrWhiteSpace(rawName)
+                    ? string.Concat(rawName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries))
+                    : "Custom";
+                if (string.IsNullOrWhiteSpace(cleanName)) cleanName = "Custom";
+
+                packName = char.ToUpper(cleanName[0]) + (cleanName.Length > 1 ? cleanName[1..] : "");
                 imported = _soundManager.ImportCustomSoundFile(dialog.FileName, packName, AppSettings.UserSoundsDirectory);
             }
 

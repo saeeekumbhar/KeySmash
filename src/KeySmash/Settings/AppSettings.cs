@@ -62,7 +62,9 @@ public sealed class AppSettings
             Directory.CreateDirectory(SettingsDirectory);
             var options = new JsonSerializerOptions { WriteIndented = true };
             var json = JsonSerializer.Serialize(this, options);
-            File.WriteAllText(SettingsFilePath, json);
+            var tempFilePath = SettingsFilePath + ".tmp";
+            File.WriteAllText(tempFilePath, json);
+            File.Move(tempFilePath, SettingsFilePath, overwrite: true);
         }
         catch
         {

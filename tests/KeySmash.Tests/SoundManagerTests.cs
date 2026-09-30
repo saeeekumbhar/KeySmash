@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using KeySmash.Audio;
 using Xunit;
 
@@ -150,5 +151,93 @@ public class SoundManagerTests
         {
             manager.PlayKeySound();
         });
+    }
+
+    [Fact]
+    public void ImportCustomZip_FlattensNestedDirectory()
+    {
+        using var manager = new SoundManager();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"zip_test_{Guid.NewGuid()}");
+        var userSoundsDir = Path.Combine(tempDir, "sounds");
+        var zipPath = Path.Combine(tempDir, "NestedPack.zip");
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(userSoundsDir);
+
+        try
+        {
+            var stageDir = Path.Combine(tempDir, "staging", "NestedPack");
+            Directory.CreateDirectory(stageDir);
+            CreateDummyWav(Path.Combine(stageDir, "type_01.wav"));
+            CreateDummyWav(Path.Combine(stageDir, "space_01.wav"));
+            CreateDummyWav(Path.Combine(stageDir, "delete_01.wav"));
+            ZipFile.CreateFromDirectory(Path.Combine(tempDir, "staging"), zipPath);
+
+            var imported = manager.ImportCustomZip(zipPath, userSoundsDir);
+
+            Assert.True(imported);
+            Assert.NotNull(manager.SelectedPack);
+            Assert.Equal("NestedPack", manager.SelectedPack.Name);
+            Assert.NotEmpty(manager.SelectedPack.Samples);
+            Assert.NotEmpty(manager.SelectedPack.SpaceSamples);
+            Assert.NotEmpty(manager.SelectedPack.BackspaceSamples);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ImportCustomZip_CleansUpOnInvalidArchive()
+    {
+        using var manager = new SoundManager();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"zip_invalid_{Guid.NewGuid()}");
+        var userSoundsDir = Path.Combine(tempDir, "sounds");
+        var zipPath = Path.Combine(tempDir, "CorruptPack.zip");
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(userSoundsDir);
+
+        try
+        {
+            // Empty zip with no audio files
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("readme.txt");
+                using var writer = new StreamWriter(entry.Open());
+                writer.WriteLine("No sounds here");
+            }
+
+            var imported = manager.ImportCustomZip(zipPath, userSoundsDir);
+
+            Assert.False(imported);
+            // Ensure no empty orphaned folder is left behind
+            Assert.False(Directory.Exists(Path.Combine(userSoundsDir, "CorruptPack")));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    private static void CreateDummyWav(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
+        using var bw = new BinaryWriter(fs);
+        bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+        bw.Write(36 + 8820);
+        bw.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+        bw.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+        bw.Write(16); // subchunk1size (PCM)
+        bw.Write((short)1); // PCM
+        bw.Write((short)1); // mono
+        bw.Write(44100); // sample rate
+        bw.Write(44100 * 2); // byte rate
+        bw.Write((short)2); // block align
+        bw.Write((short)16); // bits per sample
+        bw.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+        bw.Write(8820); // 0.1s of audio data
+        bw.Write(new byte[8820]);
     }
 }

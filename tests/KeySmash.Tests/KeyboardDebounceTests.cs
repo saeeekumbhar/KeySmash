@@ -52,4 +52,14 @@ public class KeyboardDebounceTests
         hook.ResetKeyState();
         Assert.False(hook.IsKeyDown(0x57));
     }
+
+    [Fact]
+    public void ResetKeyState_ClearsStateAndAllowsImmediateRetrigger()
+    {
+        using var hook = new KeyboardHook();
+        hook.ResetKeyState();
+
+        Assert.False(hook.IsKeyDown(0x20));
+        Assert.False(hook.IsKeyDown(0x08));
+    }
 }

@@ -88,16 +88,28 @@ public sealed class SoundManager : IDisposable
                 }
                 catch
                 {
-                    // Fall back to WaveOutEvent if WASAPI is restricted or unavailable
-                    var waveOut = new WaveOutEvent
+                    try
                     {
-                        DesiredLatency = 40,
-                        NumberOfBuffers = 2
-                    };
-                    waveOut.PlaybackStopped += OnPlaybackStopped;
-                    waveOut.Init(_volumeProvider);
-                    waveOut.Play();
-                    _outputDevice = waveOut;
+                        // Fall back to polling WASAPI (~25ms) if event-sync is rejected by driver
+                        var wasapiPoll = new WasapiOut(AudioClientShareMode.Shared, useEventSync: false, latency: 25);
+                        wasapiPoll.PlaybackStopped += OnPlaybackStopped;
+                        wasapiPoll.Init(_volumeProvider);
+                        wasapiPoll.Play();
+                        _outputDevice = wasapiPoll;
+                    }
+                    catch
+                    {
+                        // Fall back to WaveOutEvent if WASAPI is restricted or unavailable
+                        var waveOut = new WaveOutEvent
+                        {
+                            DesiredLatency = 40,
+                            NumberOfBuffers = 2
+                        };
+                        waveOut.PlaybackStopped += OnPlaybackStopped;
+                        waveOut.Init(_volumeProvider);
+                        waveOut.Play();
+                        _outputDevice = waveOut;
+                    }
                 }
 
                 IsAudioReady = true;
@@ -140,8 +152,20 @@ public sealed class SoundManager : IDisposable
 
     public void PlayKeySound(KeyCategory category = KeyCategory.General)
     {
-        if (_isMuted || SelectedPack == null || !IsAudioReady)
+        if (_isMuted || SelectedPack == null)
             return;
+
+        if (!IsAudioReady)
+        {
+            // Auto-reconnect if device was plugged in after startup
+            var now = Stopwatch.GetTimestamp();
+            var elapsedSec = (now - _lastRecoverAttempt) / (double)Stopwatch.Frequency;
+            if (elapsedSec >= 2.0)
+            {
+                Task.Run(RecoverAudioDevice);
+            }
+            return;
+        }
 
         var sample = SelectedPack.GetNextSample(Randomize, category);
         if (sample == null)
@@ -155,6 +179,13 @@ public sealed class SoundManager : IDisposable
         var targetPack = pack ?? SelectedPack;
         if (targetPack == null)
             return;
+
+        if (!IsAudioReady)
+        {
+            RecoverAudioDevice();
+            if (!IsAudioReady)
+                return;
+        }
 
         var sample = targetPack.GetNextSample(Randomize, category);
         if (sample == null)
@@ -249,7 +280,7 @@ public sealed class SoundManager : IDisposable
         var supportedExtensions = new[] { "*.wav", "*.mp3", "*.aiff" };
 
         var files = supportedExtensions
-            .SelectMany(ext => Directory.GetFiles(folderPath, ext))
+            .SelectMany(ext => Directory.GetFiles(folderPath, ext, SearchOption.AllDirectories))
             .OrderBy(f => f)
             .ToList();
 
@@ -274,7 +305,8 @@ public sealed class SoundManager : IDisposable
                 }
                 else if (fileName.StartsWith("backspace", StringComparison.OrdinalIgnoreCase) ||
                          fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.StartsWith("delete", StringComparison.OrdinalIgnoreCase))
+                         fileName.StartsWith("delete", StringComparison.OrdinalIgnoreCase) ||
+                         fileName.StartsWith("del", StringComparison.OrdinalIgnoreCase))
                 {
                     pack.BackspaceSamples.Add(cached);
                 }
@@ -346,13 +378,51 @@ public sealed class SoundManager : IDisposable
         if (!File.Exists(zipFilePath))
             return false;
 
+        string? packDir = null;
         try
         {
-            var packName = Path.GetFileNameWithoutExtension(zipFilePath);
-            var packDir = Path.Combine(targetBaseDir, packName);
+            var packName = Path.GetFileNameWithoutExtension(zipFilePath)?.Trim();
+            if (string.IsNullOrWhiteSpace(packName))
+                packName = "CustomPack";
+
+            var invalidChars = Path.GetInvalidFileNameChars();
+            packName = string.Concat(packName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
+            if (string.IsNullOrWhiteSpace(packName))
+                packName = "CustomPack";
+
+            packDir = Path.Combine(targetBaseDir, packName);
             Directory.CreateDirectory(packDir);
 
+            // Zip Slip validation: prevent directory traversal
+            using (var archive = ZipFile.OpenRead(zipFilePath))
+            {
+                var fullDest = Path.GetFullPath(packDir) + Path.DirectorySeparatorChar;
+                foreach (var entry in archive.Entries)
+                {
+                    var destPath = Path.GetFullPath(Path.Combine(packDir, entry.FullName));
+                    if (!destPath.StartsWith(fullDest, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Directory.Delete(packDir, true);
+                        return false;
+                    }
+                }
+            }
+
             ZipFile.ExtractToDirectory(zipFilePath, packDir, overwriteFiles: true);
+
+            // If the zip contained a single nested root folder, flatten it
+            var subDirs = Directory.GetDirectories(packDir);
+            var rootFiles = Directory.GetFiles(packDir);
+            if (rootFiles.Length == 0 && subDirs.Length == 1)
+            {
+                var nestedDir = subDirs[0];
+                foreach (var file in Directory.GetFiles(nestedDir, "*.*", SearchOption.AllDirectories))
+                {
+                    var dest = Path.Combine(packDir, Path.GetFileName(file));
+                    File.Move(file, dest, overwrite: true);
+                }
+                try { Directory.Delete(nestedDir, true); } catch { }
+            }
 
             var pack = LoadPackFromFolder(packDir, packName, isBuiltIn: false);
             if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
@@ -363,9 +433,18 @@ public sealed class SoundManager : IDisposable
                 SelectedPack = pack;
                 return true;
             }
+
+            if (Directory.Exists(packDir))
+            {
+                Directory.Delete(packDir, recursive: true);
+            }
         }
         catch
         {
+            if (!string.IsNullOrEmpty(packDir) && Directory.Exists(packDir))
+            {
+                try { Directory.Delete(packDir, recursive: true); } catch { }
+            }
             return false;
         }
 

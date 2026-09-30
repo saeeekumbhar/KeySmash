@@ -16,7 +16,6 @@ public sealed class KeyboardHook : IDisposable
 
     private readonly HookProc _proc;
     private nint _hookId = nint.Zero;
-    private long _lastPressTimestamp;
     private int _minIntervalMs = 20;
 
     // Asynchronous lock-free queue: isolates Windows hook thread from audio processing
@@ -27,6 +26,7 @@ public sealed class KeyboardHook : IDisposable
 
     // Full 256-key state map to accurately track multiple held keys simultaneously (e.g. gaming WASD + Shift/Space)
     private readonly bool[] _isKeyDown = new bool[256];
+    private readonly long[] _lastKeyDownTimestamp = new long[256];
     public bool SuppressHeldKeyRepeats { get; set; } = true;
 
     public event Action<KeyCategory>? KeyPressed;
@@ -59,6 +59,7 @@ public sealed class KeyboardHook : IDisposable
     public void ResetKeyState()
     {
         Array.Clear(_isKeyDown, 0, _isKeyDown.Length);
+        Array.Clear(_lastKeyDownTimestamp, 0, _lastKeyDownTimestamp.Length);
     }
 
     private async Task ProcessQueueAsync()
@@ -128,19 +129,20 @@ public sealed class KeyboardHook : IDisposable
 
                 bool allowTrigger = false;
                 long now = Stopwatch.GetTimestamp();
+                var lastKeyTime = vkCode < 256 ? _lastKeyDownTimestamp[vkCode] : 0;
+                var elapsedPerKeyMs = lastKeyTime > 0 ? (now - lastKeyTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
 
                 if (!isRepeat)
                 {
-                    var elapsedMs = (now - _lastPressTimestamp) * 1000 / Stopwatch.Frequency;
-                    if (elapsedMs >= _minIntervalMs)
+                    // Per-key debounce: suppress switch bounce/chatter on the same key without dropping fast finger rolls
+                    if (elapsedPerKeyMs >= _minIntervalMs)
                     {
                         allowTrigger = true;
                     }
                 }
                 else if (!SuppressHeldKeyRepeats)
                 {
-                    var elapsedMs = (now - _lastPressTimestamp) * 1000 / Stopwatch.Frequency;
-                    if (elapsedMs >= _minIntervalMs)
+                    if (elapsedPerKeyMs >= _minIntervalMs)
                     {
                         allowTrigger = true;
                     }
@@ -148,8 +150,7 @@ public sealed class KeyboardHook : IDisposable
                 else if (vkCode == 0x08 || vkCode == 0x2E) // Backspace or Delete
                 {
                     // Allow smooth, pleasant pacing when deleting text (90ms)
-                    var elapsedMs = (now - _lastPressTimestamp) * 1000 / Stopwatch.Frequency;
-                    if (elapsedMs >= 90)
+                    if (elapsedPerKeyMs >= 90)
                     {
                         allowTrigger = true;
                     }
@@ -158,13 +159,17 @@ public sealed class KeyboardHook : IDisposable
 
                 if (allowTrigger)
                 {
-                    _lastPressTimestamp = now;
+                    if (vkCode < 256)
+                    {
+                        _lastKeyDownTimestamp[vkCode] = now;
+                    }
 
                     var category = vkCode switch
                     {
                         0x20 => KeyCategory.Space,
                         0x0D => KeyCategory.Enter,
                         0x08 => KeyCategory.Backspace,
+                        0x2E => KeyCategory.Backspace,
                         _ => KeyCategory.General
                     };
 
