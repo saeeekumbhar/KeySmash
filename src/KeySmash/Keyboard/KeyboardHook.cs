@@ -127,10 +127,23 @@ public sealed class KeyboardHook : IDisposable
                     _isKeyDown[vkCode] = true;
                 }
 
-                bool allowTrigger = false;
                 long now = Stopwatch.GetTimestamp();
                 var lastKeyTime = vkCode < 256 ? _lastKeyDownTimestamp[vkCode] : 0;
                 var elapsedPerKeyMs = lastKeyTime > 0 ? (now - lastKeyTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
+
+                // Recover from missed WM_KEYUP (e.g. Win+L lock screen, Alt+Tab, UAC prompt, or focus transitions)
+                if (isRepeat)
+                {
+                    bool isPhysicallyPressed = (GetAsyncKeyState((int)vkCode) & 0x8000) != 0;
+                    // Windows auto-repeat typematic delay never exceeds 1000ms. If elapsed > 1000ms or
+                    // hardware indicates the key was released, treat as a fresh press.
+                    if (!isPhysicallyPressed || elapsedPerKeyMs > 1000)
+                    {
+                        isRepeat = false;
+                    }
+                }
+
+                bool allowTrigger = false;
 
                 if (!isRepeat)
                 {
@@ -208,4 +221,7 @@ public sealed class KeyboardHook : IDisposable
 
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern nint CallNextHookEx(nint hhk, int nCode, nint wParam, nint lParam);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 }

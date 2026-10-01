@@ -56,7 +56,9 @@ public partial class MainWindow : Window, IDisposable
         };
 
         SystemEvents.SessionEnding += OnSessionEnding;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+        _soundManager.AudioStateChanged += OnAudioStateChanged;
 
         // Ensure HWND is allocated immediately so global hotkeys and IPC register even in --background
         var helper = new WindowInteropHelper(this);
@@ -216,6 +218,40 @@ public partial class MainWindow : Window, IDisposable
         {
             FooterStatusLabel.Text = _soundManager.AudioErrorMessage;
             FooterStatusLabel.Foreground = System.Windows.Media.Brushes.Crimson;
+        }
+    }
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.SessionLock)
+        {
+            _keyboardHook.ResetKeyState();
+        }
+    }
+
+    private void OnAudioStateChanged(bool isReady, string? error)
+    {
+        try
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (FooterStatusLabel == null) return;
+
+                if (isReady)
+                {
+                    FooterStatusLabel.Text = "Ready";
+                    FooterStatusLabel.Foreground = (SolidColorBrush)FindResource("TextSecondaryBrush");
+                }
+                else
+                {
+                    FooterStatusLabel.Text = error ?? "Audio output device unavailable";
+                    FooterStatusLabel.Foreground = System.Windows.Media.Brushes.Crimson;
+                }
+            });
+        }
+        catch
+        {
+            // ignore if dispatcher is unavailable or shutting down
         }
     }
 
@@ -480,23 +516,13 @@ public partial class MainWindow : Window, IDisposable
             if (ext == ".zip")
             {
                 var rawName = Path.GetFileNameWithoutExtension(dialog.FileName)?.Trim();
-                var invalidChars = Path.GetInvalidFileNameChars();
-                packName = !string.IsNullOrWhiteSpace(rawName)
-                    ? string.Concat(rawName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries))
-                    : "CustomPack";
-                if (string.IsNullOrWhiteSpace(packName)) packName = "CustomPack";
-
+                packName = SoundManager.ResolveSafePackName(rawName, "CustomPack");
                 imported = _soundManager.ImportCustomZip(dialog.FileName, AppSettings.UserSoundsDirectory);
             }
             else
             {
                 var rawName = Path.GetFileNameWithoutExtension(dialog.FileName)?.Trim();
-                var invalidChars = Path.GetInvalidFileNameChars();
-                var cleanName = !string.IsNullOrWhiteSpace(rawName)
-                    ? string.Concat(rawName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries))
-                    : "Custom";
-                if (string.IsNullOrWhiteSpace(cleanName)) cleanName = "Custom";
-
+                var cleanName = SoundManager.ResolveSafePackName(rawName, "Custom");
                 packName = char.ToUpper(cleanName[0]) + (cleanName.Length > 1 ? cleanName[1..] : "");
                 imported = _soundManager.ImportCustomSoundFile(dialog.FileName, packName, AppSettings.UserSoundsDirectory);
             }
@@ -622,7 +648,18 @@ public partial class MainWindow : Window, IDisposable
     public void RestoreFromTray()
     {
         Show();
-        WindowState = WindowState.Normal;
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        var helper = new WindowInteropHelper(this);
+        if (helper.Handle != nint.Zero)
+        {
+            ShowWindow(helper.Handle, 9 /* SW_RESTORE */);
+            SetForegroundWindow(helper.Handle);
+        }
+
         Activate();
         Topmost = true;
         Topmost = false;
@@ -649,6 +686,11 @@ public partial class MainWindow : Window, IDisposable
             {
                 // ignore if already closed
             }
+            try
+            {
+                System.Windows.Application.Current?.Shutdown();
+            }
+            catch { }
         }
         else
         {
@@ -667,7 +709,17 @@ public partial class MainWindow : Window, IDisposable
     {
         _isExiting = true;
         CleanupResources();
-        Close();
+        try
+        {
+            Close();
+        }
+        catch { }
+
+        try
+        {
+            System.Windows.Application.Current?.Shutdown();
+        }
+        catch { }
     }
 
     protected override void OnStateChanged(EventArgs e)
@@ -702,6 +754,20 @@ public partial class MainWindow : Window, IDisposable
         base.OnClosing(e);
     }
 
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+
+        if (_isExiting || !_settings.MinimizeToTrayOnClose)
+        {
+            try
+            {
+                System.Windows.Application.Current?.Shutdown();
+            }
+            catch { }
+        }
+    }
+
     private void OnSessionEnding(object? sender, SessionEndingEventArgs e)
     {
         _isExiting = true;
@@ -724,7 +790,9 @@ public partial class MainWindow : Window, IDisposable
             try
             {
                 SystemEvents.SessionEnding -= OnSessionEnding;
+                SystemEvents.SessionSwitch -= OnSessionSwitch;
                 AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
+                _soundManager.AudioStateChanged -= OnAudioStateChanged;
             }
             catch { }
 
@@ -777,4 +845,10 @@ public partial class MainWindow : Window, IDisposable
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(nint hWnd, int id);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(nint hWnd, int nCmdShow);
 }

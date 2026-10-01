@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Fixed background zombie process on application exit caused by `ShutdownMode.OnExplicitShutdown` without explicit shutdown call, freeing single-instance mutex reliably.
+- Fixed catastrophic data loss vulnerability in custom sound pack deletion where deleting the loose "Custom Sounds" pack deleted the root `%LocalAppData%\KeySmash\sounds` directory and all packs inside it.
+- Fixed permanent key muting caused by missed `WM_KEYUP` events during lock screen (`Win + L`), `Alt + Tab`, or UAC prompt transitions via hardware `GetAsyncKeyState` queries and typematic repeat window verification.
+- Fixed audio playback crash loops on multi-channel audio files (>2 channels) by automatically downmixing surround sources to stereo.
+- Added hyperbolic tangent soft-limiter saturation stage between mixer and volume provider to eliminate digital clipping and pops during rapid typing bursts.
+- Added audio sample length clamping (5 seconds max) and import duration validation (15 seconds max) to prevent memory exhaustion and UI freezes.
+- Fixed security vulnerability in ZIP sound pack importer by strictly filtering safe audio/metadata files and rejecting executable scripts (`.exe`, `.bat`, `.cmd`, `.dll`, etc.).
+- Added Zip bomb protection: enforced limits on max uncompressed payload size (250 MB) and max entry count (500).
+- Fixed sound pack name collisions with built-in packs (`Typewriter`, `Mechanical`, etc.) by safely qualifying custom imports with `(Custom)`.
+- Fixed audio device recovery UI synchronization by propagating live state changes to the MainWindow footer.
+- Fixed concurrency race conditions in settings serialization via synchronized locks and unique atomic temp files.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added

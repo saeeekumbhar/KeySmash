@@ -96,4 +96,26 @@ public class SettingsTests
         Assert.False(restored.Randomize);
         Assert.True(restored.StartWithWindows);
     }
+
+    [Fact]
+    public void Save_ConcurrentWrites_DoNotThrowExceptions()
+    {
+        var settings = new AppSettings();
+        var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+        Parallel.For(0, 10, i =>
+        {
+            try
+            {
+                settings.MasterVolume = (i % 10) / 10f;
+                settings.Save();
+            }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+        });
+
+        Assert.Empty(exceptions);
+    }
 }

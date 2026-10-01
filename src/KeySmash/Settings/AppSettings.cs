@@ -55,20 +55,25 @@ public sealed class AppSettings
         return new AppSettings();
     }
 
+    private static readonly object _saveLock = new();
+
     public void Save()
     {
-        try
+        lock (_saveLock)
         {
-            Directory.CreateDirectory(SettingsDirectory);
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            var json = JsonSerializer.Serialize(this, options);
-            var tempFilePath = SettingsFilePath + ".tmp";
-            File.WriteAllText(tempFilePath, json);
-            File.Move(tempFilePath, SettingsFilePath, overwrite: true);
-        }
-        catch
-        {
-            // silently handle disk write errors
+            try
+            {
+                Directory.CreateDirectory(SettingsDirectory);
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                var json = JsonSerializer.Serialize(this, options);
+                var tempFilePath = Path.Combine(SettingsDirectory, $"settings.{Guid.NewGuid():N}.tmp");
+                File.WriteAllText(tempFilePath, json);
+                File.Move(tempFilePath, SettingsFilePath, overwrite: true);
+            }
+            catch
+            {
+                // silently handle disk write errors
+            }
         }
     }
 

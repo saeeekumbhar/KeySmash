@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using KeySmash.Keyboard;
+using KeySmash.Settings;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -20,12 +21,18 @@ public sealed class SoundManager : IDisposable
     private long _lastRecoverAttempt;
     private int _activeVoices;
     private const int MaxConcurrentVoices = 16;
+    private SoundPack? _selectedPack;
 
     public List<SoundPack> SoundPacks { get; } = new();
-    public SoundPack? SelectedPack { get; set; }
+    public SoundPack? SelectedPack
+    {
+        get => Volatile.Read(ref _selectedPack);
+        set => Volatile.Write(ref _selectedPack, value);
+    }
     public bool Randomize { get; set; } = true;
     public bool IsAudioReady { get; private set; }
     public string? AudioErrorMessage { get; private set; }
+    public event Action<bool, string?>? AudioStateChanged;
 
     public float MasterVolume
     {
@@ -56,7 +63,10 @@ public sealed class SoundManager : IDisposable
             ReadFully = true
         };
 
-        _volumeProvider = new VolumeSampleProvider(_mixer)
+        // Soft saturation limiter prevents digital clipping and popping on fast typing bursts
+        var limiter = new SoftLimiterSampleProvider(_mixer);
+
+        _volumeProvider = new VolumeSampleProvider(limiter)
         {
             Volume = _masterVolume
         };
@@ -114,6 +124,7 @@ public sealed class SoundManager : IDisposable
 
                 IsAudioReady = true;
                 AudioErrorMessage = null;
+                AudioStateChanged?.Invoke(true, null);
             }
             catch (Exception)
             {
@@ -121,6 +132,7 @@ public sealed class SoundManager : IDisposable
                 IsAudioReady = false;
                 AudioErrorMessage = "Audio output device unavailable";
                 _outputDevice = null;
+                AudioStateChanged?.Invoke(false, AudioErrorMessage);
             }
         }
     }
@@ -227,37 +239,41 @@ public sealed class SoundManager : IDisposable
         if (!Directory.Exists(directoryPath))
             return;
 
-        foreach (var subDir in Directory.GetDirectories(directoryPath))
+        lock (_lock)
         {
-            var packName = Path.GetFileName(subDir);
-            var pack = LoadPackFromFolder(subDir, packName, isBuiltIn);
-            if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
+            foreach (var subDir in Directory.GetDirectories(directoryPath))
             {
-                // remove existing with same name if reloading
-                SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
-                SoundPacks.Add(pack);
-            }
-        }
-
-        // Support loose audio files directly in directoryPath (e.g. user dropped files into sounds folder)
-        if (!isBuiltIn)
-        {
-            var looseFiles = Directory.GetFiles(directoryPath, "*.wav")
-                .Concat(Directory.GetFiles(directoryPath, "*.mp3"))
-                .ToList();
-
-            if (looseFiles.Count > 0)
-            {
-                var loosePack = LoadPackFromFolder(directoryPath, "Custom Sounds", isBuiltIn: false);
-                if (loosePack != null && (loosePack.Samples.Count > 0 || loosePack.SpaceSamples.Count > 0))
+                var packName = Path.GetFileName(subDir);
+                var pack = LoadPackFromFolder(subDir, packName, isBuiltIn);
+                if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
                 {
-                    SoundPacks.RemoveAll(p => string.Equals(p.Name, loosePack.Name, StringComparison.OrdinalIgnoreCase));
-                    SoundPacks.Add(loosePack);
+                    // remove existing with same name if reloading
+                    SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
+                    SoundPacks.Add(pack);
                 }
             }
-        }
 
-        SortPacks();
+            // Support loose audio files directly in directoryPath (e.g. user dropped files into sounds folder)
+            if (!isBuiltIn)
+            {
+                var looseFiles = Directory.GetFiles(directoryPath, "*.wav")
+                    .Concat(Directory.GetFiles(directoryPath, "*.mp3"))
+                    .Concat(Directory.GetFiles(directoryPath, "*.aiff"))
+                    .ToList();
+
+                if (looseFiles.Count > 0)
+                {
+                    var loosePack = LoadPackFromFolder(directoryPath, "Custom Sounds", isBuiltIn: false);
+                    if (loosePack != null && (loosePack.Samples.Count > 0 || loosePack.SpaceSamples.Count > 0))
+                    {
+                        SoundPacks.RemoveAll(p => string.Equals(p.Name, loosePack.Name, StringComparison.OrdinalIgnoreCase));
+                        SoundPacks.Add(loosePack);
+                    }
+                }
+            }
+
+            SortPacks();
+        }
     }
 
     private void SortPacks()
@@ -334,6 +350,43 @@ public sealed class SoundManager : IDisposable
         return pack;
     }
 
+    public static string SanitizePackName(string? rawName, string fallback = "CustomPack")
+    {
+        if (string.IsNullOrWhiteSpace(rawName))
+            return fallback;
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var clean = string.Concat(rawName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        clean = clean.Trim('.', ' ');
+
+        var reservedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+        };
+
+        if (string.IsNullOrWhiteSpace(clean) || reservedNames.Contains(clean))
+            return fallback;
+
+        return clean;
+    }
+
+    private static readonly HashSet<string> BuiltInPackNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Typewriter", "Mechanical", "Bubble", "Shotgun"
+    };
+
+    public static string ResolveSafePackName(string? rawName, string fallback = "CustomPack")
+    {
+        var clean = SanitizePackName(rawName, fallback);
+        if (BuiltInPackNames.Contains(clean))
+        {
+            return $"{clean} (Custom)";
+        }
+        return clean;
+    }
+
     public bool ImportCustomSoundFile(string sourceFilePath, string packName, string targetBaseDir)
     {
         if (!File.Exists(sourceFilePath))
@@ -341,27 +394,31 @@ public sealed class SoundManager : IDisposable
 
         try
         {
-            // validate audio file readability first
+            // validate audio file readability and clamp max duration (max 15 seconds for typing effect)
             using (var reader = new AudioFileReader(sourceFilePath))
             {
-                if (reader.TotalTime.TotalSeconds <= 0)
+                if (reader.TotalTime.TotalSeconds <= 0 || reader.TotalTime.TotalSeconds > 15)
                     return false;
             }
 
-            var packDir = Path.Combine(targetBaseDir, packName);
+            var safePackName = ResolveSafePackName(packName, "Custom");
+            var packDir = Path.Combine(targetBaseDir, safePackName);
             Directory.CreateDirectory(packDir);
 
             var fileName = Path.GetFileName(sourceFilePath);
             var destPath = Path.Combine(packDir, fileName);
             File.Copy(sourceFilePath, destPath, overwrite: true);
 
-            var pack = LoadPackFromFolder(packDir, packName, isBuiltIn: false);
+            var pack = LoadPackFromFolder(packDir, safePackName, isBuiltIn: false);
             if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
             {
-                SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
-                SoundPacks.Add(pack);
-                SortPacks();
-                SelectedPack = pack;
+                lock (_lock)
+                {
+                    SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
+                    SoundPacks.Add(pack);
+                    SortPacks();
+                    SelectedPack = pack;
+                }
                 return true;
             }
         }
@@ -381,34 +438,79 @@ public sealed class SoundManager : IDisposable
         string? packDir = null;
         try
         {
-            var packName = Path.GetFileNameWithoutExtension(zipFilePath)?.Trim();
-            if (string.IsNullOrWhiteSpace(packName))
-                packName = "CustomPack";
-
-            var invalidChars = Path.GetInvalidFileNameChars();
-            packName = string.Concat(packName.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
-            if (string.IsNullOrWhiteSpace(packName))
-                packName = "CustomPack";
+            var rawName = Path.GetFileNameWithoutExtension(zipFilePath)?.Trim();
+            var packName = ResolveSafePackName(rawName, "CustomPack");
 
             packDir = Path.Combine(targetBaseDir, packName);
-            Directory.CreateDirectory(packDir);
+            var fullDest = Path.GetFullPath(packDir) + Path.DirectorySeparatorChar;
 
-            // Zip Slip validation: prevent directory traversal
+            const long maxTotalUncompressedBytes = 250 * 1024 * 1024; // 250 MB max
+            const int maxEntryCount = 500;
+            const long maxSingleFileBytes = 50 * 1024 * 1024; // 50 MB max
+
+            var safeExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".wav", ".mp3", ".aiff", ".ogg", ".flac", ".txt", ".json", ".md"
+            };
+
             using (var archive = ZipFile.OpenRead(zipFilePath))
             {
-                var fullDest = Path.GetFullPath(packDir) + Path.DirectorySeparatorChar;
+                if (archive.Entries.Count > maxEntryCount)
+                    return false;
+
+                long totalUncompressed = 0;
                 foreach (var entry in archive.Entries)
                 {
-                    var destPath = Path.GetFullPath(Path.Combine(packDir, entry.FullName));
-                    if (!destPath.StartsWith(fullDest, StringComparison.OrdinalIgnoreCase))
-                    {
-                        Directory.Delete(packDir, true);
+                    if (entry.Length > maxSingleFileBytes)
                         return false;
+
+                    totalUncompressed += entry.Length;
+                    if (totalUncompressed > maxTotalUncompressedBytes)
+                        return false;
+
+                    // Zip slip traversal check
+                    var entryDest = Path.GetFullPath(Path.Combine(packDir, entry.FullName));
+                    if (!entryDest.StartsWith(fullDest, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+
+                Directory.CreateDirectory(packDir);
+
+                // Extract ONLY safe files (audio and metadata), rejecting all executables/scripts
+                int extractedAudioCount = 0;
+                foreach (var entry in archive.Entries)
+                {
+                    if (string.IsNullOrEmpty(entry.Name))
+                        continue; // directory entry
+
+                    var ext = Path.GetExtension(entry.Name);
+                    if (!safeExtensions.Contains(ext))
+                        continue; // skip unsafe files (.exe, .bat, .dll, etc.)
+
+                    var destPath = Path.GetFullPath(Path.Combine(packDir, entry.FullName));
+                    var entryDir = Path.GetDirectoryName(destPath);
+                    if (!string.IsNullOrEmpty(entryDir))
+                    {
+                        Directory.CreateDirectory(entryDir);
+                    }
+
+                    entry.ExtractToFile(destPath, overwrite: true);
+
+                    if (ext.Equals(".wav", StringComparison.OrdinalIgnoreCase) ||
+                        ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase) ||
+                        ext.Equals(".aiff", StringComparison.OrdinalIgnoreCase))
+                    {
+                        extractedAudioCount++;
                     }
                 }
-            }
 
-            ZipFile.ExtractToDirectory(zipFilePath, packDir, overwriteFiles: true);
+                if (extractedAudioCount == 0)
+                {
+                    if (Directory.Exists(packDir))
+                        Directory.Delete(packDir, true);
+                    return false;
+                }
+            }
 
             // If the zip contained a single nested root folder, flatten it
             var subDirs = Directory.GetDirectories(packDir);
@@ -427,10 +529,13 @@ public sealed class SoundManager : IDisposable
             var pack = LoadPackFromFolder(packDir, packName, isBuiltIn: false);
             if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
             {
-                SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
-                SoundPacks.Add(pack);
-                SortPacks();
-                SelectedPack = pack;
+                lock (_lock)
+                {
+                    SoundPacks.RemoveAll(p => string.Equals(p.Name, pack.Name, StringComparison.OrdinalIgnoreCase));
+                    SoundPacks.Add(pack);
+                    SortPacks();
+                    SelectedPack = pack;
+                }
                 return true;
             }
 
@@ -458,16 +563,56 @@ public sealed class SoundManager : IDisposable
 
         try
         {
-            if (Directory.Exists(pack.DirectoryPath))
+            var userSoundsRoot = Path.GetFullPath(AppSettings.UserSoundsDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var targetPackDir = Path.GetFullPath(pack.DirectoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            bool isRootSoundsFolder = string.Equals(userSoundsRoot, targetPackDir, StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(pack.Name, "Custom Sounds", StringComparison.OrdinalIgnoreCase);
+
+            // Security check: Never delete the sounds root directory itself or a loose sounds folder!
+            if (isRootSoundsFolder)
             {
-                Directory.Delete(pack.DirectoryPath, recursive: true);
+                // Delete only loose audio files in root; NEVER delete the root directory itself!
+                var looseFiles = Directory.GetFiles(targetPackDir, "*.wav")
+                    .Concat(Directory.GetFiles(targetPackDir, "*.mp3"))
+                    .Concat(Directory.GetFiles(targetPackDir, "*.aiff"));
+                foreach (var file in looseFiles)
+                {
+                    try { File.Delete(file); } catch { }
+                }
+
+                lock (_lock)
+                {
+                    SoundPacks.Remove(pack);
+                    if (SelectedPack == pack)
+                    {
+                        SelectedPack = SoundPacks.FirstOrDefault();
+                    }
+                }
+                return true;
             }
 
-            SoundPacks.Remove(pack);
-
-            if (SelectedPack == pack)
+            // Guard against deleting system root or profile directories
+            var root = Path.GetPathRoot(targetPackDir)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(root, targetPackDir, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), targetPackDir, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), targetPackDir, StringComparison.OrdinalIgnoreCase))
             {
-                SelectedPack = SoundPacks.FirstOrDefault();
+                return false;
+            }
+
+            if (Directory.Exists(targetPackDir))
+            {
+                Directory.Delete(targetPackDir, recursive: true);
+            }
+
+            lock (_lock)
+            {
+                SoundPacks.Remove(pack);
+                if (SelectedPack == pack)
+                {
+                    SelectedPack = SoundPacks.FirstOrDefault();
+                }
             }
 
             return true;
@@ -499,5 +644,31 @@ public sealed class SoundManager : IDisposable
                 _outputDevice = null;
             }
         }
+    }
+}
+
+public sealed class SoftLimiterSampleProvider : ISampleProvider
+{
+    private readonly ISampleProvider _source;
+    public WaveFormat WaveFormat => _source.WaveFormat;
+
+    public SoftLimiterSampleProvider(ISampleProvider source)
+    {
+        _source = source;
+    }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int read = _source.Read(buffer, offset, count);
+        for (int i = 0; i < read; i++)
+        {
+            float s = buffer[offset + i];
+            // Hyperbolic tangent soft saturation prevents digital clipping pops
+            if (s > 0.85f || s < -0.85f)
+            {
+                buffer[offset + i] = (float)Math.Tanh(s);
+            }
+        }
+        return read;
     }
 }

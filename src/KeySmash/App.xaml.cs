@@ -31,6 +31,9 @@ public partial class App : Application
 
         if (!isNewInstance)
         {
+            _instanceMutex?.Dispose();
+            _instanceMutex = null;
+
             // Signal the existing running instance to bring its window to the foreground
             try
             {

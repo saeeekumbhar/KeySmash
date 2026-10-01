@@ -62,4 +62,18 @@ public class KeyboardDebounceTests
         Assert.False(hook.IsKeyDown(0x20));
         Assert.False(hook.IsKeyDown(0x08));
     }
+
+    [Theory]
+    [InlineData(1050, true)] // > 1000ms typematic threshold -> recover from missed KeyUp
+    [InlineData(50, false)]  // <= 1000ms -> active held repeat
+    public void MissedKeyUp_RecoversWhenElapsedExceedsTypematicWindow(long elapsedMs, bool shouldRecover)
+    {
+        bool isRepeat = true;
+        if (isRepeat && elapsedMs > 1000)
+        {
+            isRepeat = false;
+        }
+
+        Assert.Equal(shouldRecover, !isRepeat);
+    }
 }

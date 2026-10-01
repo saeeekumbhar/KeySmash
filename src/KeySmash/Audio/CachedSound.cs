@@ -14,13 +14,24 @@ public sealed class CachedSound
 
         ISampleProvider provider = reader;
 
-        // resample to standard 44.1khz for uniform mixing
-        if (reader.WaveFormat.SampleRate != 44100)
-            provider = new WdlResamplingSampleProvider(provider, 44100);
-
         // convert mono inputs to stereo
         if (provider.WaveFormat.Channels == 1)
+        {
             provider = new MonoToStereoSampleProvider(provider);
+        }
+        // downmix multi-channel surround inputs (>2 channels) to stereo
+        else if (provider.WaveFormat.Channels > 2)
+        {
+            provider = new MultiChannelToStereoSampleProvider(provider);
+        }
+
+        // resample to standard 44.1khz for uniform mixing
+        if (provider.WaveFormat.SampleRate != 44100)
+            provider = new WdlResamplingSampleProvider(provider, 44100);
+
+        // Cap maximum sample length to 5 seconds to prevent unbounded memory usage or UI freezes
+        const int maxDurationSeconds = 5;
+        const int maxSamples = 44100 * 2 * maxDurationSeconds;
 
         var sampleList = new List<float>();
         var buffer = new float[4096];
@@ -28,8 +39,12 @@ public sealed class CachedSound
 
         while ((count = provider.Read(buffer, 0, buffer.Length)) > 0)
         {
-            for (var i = 0; i < count; i++)
+            var take = Math.Min(count, maxSamples - sampleList.Count);
+            for (var i = 0; i < take; i++)
                 sampleList.Add(buffer[i]);
+
+            if (sampleList.Count >= maxSamples)
+                break;
         }
 
         AudioData = sampleList.ToArray();
@@ -84,5 +99,53 @@ public sealed class CachedSoundSampleProvider : ISampleProvider
         {
             _onCompleted?.Invoke();
         }
+    }
+}
+
+public sealed class MultiChannelToStereoSampleProvider : ISampleProvider
+{
+    private readonly ISampleProvider _source;
+    private readonly int _sourceChannels;
+    private readonly float[] _sourceBuffer;
+
+    public WaveFormat WaveFormat { get; }
+
+    public MultiChannelToStereoSampleProvider(ISampleProvider source)
+    {
+        _source = source;
+        _sourceChannels = source.WaveFormat.Channels;
+        WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(source.WaveFormat.SampleRate, 2);
+        _sourceBuffer = new float[4096 * Math.Max(2, _sourceChannels)];
+    }
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int stereoFramesRequested = count / 2;
+        int sourceSamplesToRead = stereoFramesRequested * _sourceChannels;
+        if (sourceSamplesToRead > _sourceBuffer.Length)
+            sourceSamplesToRead = _sourceBuffer.Length;
+
+        int sourceSamplesRead = _source.Read(_sourceBuffer, 0, sourceSamplesToRead);
+        int framesRead = sourceSamplesRead / _sourceChannels;
+
+        int destIndex = offset;
+        for (int frame = 0; frame < framesRead; frame++)
+        {
+            int srcIndex = frame * _sourceChannels;
+            float left = _sourceBuffer[srcIndex];
+            float right = _sourceBuffer[srcIndex + 1];
+
+            for (int ch = 2; ch < _sourceChannels; ch++)
+            {
+                float extra = _sourceBuffer[srcIndex + ch] * 0.5f;
+                left += extra;
+                right += extra;
+            }
+
+            buffer[destIndex++] = left;
+            buffer[destIndex++] = right;
+        }
+
+        return framesRead * 2;
     }
 }
