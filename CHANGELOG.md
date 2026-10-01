@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed sound pack name collisions with built-in packs (`Typewriter`, `Mechanical`, etc.) by safely qualifying custom imports with `(Custom)`.
 - Fixed audio device recovery UI synchronization by propagating live state changes to the MainWindow footer.
 - Fixed concurrency race conditions in settings serialization via synchronized locks and unique atomic temp files.
+- Fixed infinite hotkey registration retry loop when shortcut is occupied, capping retries and adding cancellation on exit.
 
 ## [1.1.0] - 2026-09-29
 

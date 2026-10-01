@@ -30,6 +30,8 @@ public partial class MainWindow : Window, IDisposable
     private bool _isInitializing = true;
     private bool _isHotKeyRegistered;
     private string _activeHotKeyDescription = "Ctrl + Shift + M";
+    private const int MaxHotKeyRetries = 3;
+    private CancellationTokenSource? _hotkeyRetryCts;
 
     // tray menu items for dynamic updates
     private Forms.ToolStripMenuItem? _trayEnabledItem;
@@ -110,7 +112,7 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private void RegisterGlobalHotKey()
+    private void RegisterGlobalHotKey(int retryCount = 0)
     {
         var helper = new WindowInteropHelper(this);
         if (helper.Handle == nint.Zero)
@@ -127,12 +129,14 @@ public partial class MainWindow : Window, IDisposable
         {
             _isHotKeyRegistered = true;
             _activeHotKeyDescription = "Ctrl + Shift + M";
+            CancelPendingHotKeyRetry();
         }
         // Try fallback hotkey: Ctrl + Alt + M if Ctrl + Shift + M was in use by another app
         else if (RegisterHotKey(helper.Handle, MuteHotKeyId, ModControl | ModAlt | ModNoRepeat, VkM))
         {
             _isHotKeyRegistered = true;
             _activeHotKeyDescription = "Ctrl + Alt + M (fallback)";
+            CancelPendingHotKeyRetry();
         }
         else
         {
@@ -140,37 +144,67 @@ public partial class MainWindow : Window, IDisposable
             _activeHotKeyDescription = "Unavailable (conflict)";
 
             // On Windows startup, shell services may still be registering.
-            // Retry registration after a short delay if it failed initially.
-            Task.Delay(2500).ContinueWith(_ =>
+            // Retry registration after a short delay if it failed initially, capped to MaxHotKeyRetries to eliminate infinite loops.
+            if (retryCount < MaxHotKeyRetries && !_isCleanedUp && !_isExiting)
             {
-                try
+                CancelPendingHotKeyRetry();
+                _hotkeyRetryCts = new CancellationTokenSource();
+                var token = _hotkeyRetryCts.Token;
+
+                Task.Delay(2500, token).ContinueWith(t =>
                 {
-                    if (_isCleanedUp || _isExiting) return;
-                    Dispatcher.Invoke(() =>
+                    if (t.IsCanceled || _isCleanedUp || _isExiting) return;
+                    try
                     {
-                        if (!_isCleanedUp && !_isExiting && !_isHotKeyRegistered)
+                        Dispatcher.Invoke(() =>
                         {
-                            RegisterGlobalHotKey();
-                        }
-                    });
-                }
-                catch
-                {
-                    // ignore if dispatcher is shutting down
-                }
-            });
+                            if (!_isCleanedUp && !_isExiting && !_isHotKeyRegistered)
+                            {
+                                RegisterGlobalHotKey(retryCount + 1);
+                            }
+                        });
+                    }
+                    catch
+                    {
+                        // ignore if dispatcher is shutting down
+                    }
+                }, token, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+            }
         }
 
-        UpdateHotKeyUi();
+        UpdateHotKeyUi(retryCount);
     }
 
-    private void UpdateHotKeyUi()
+    private void CancelPendingHotKeyRetry()
+    {
+        try
+        {
+            _hotkeyRetryCts?.Cancel();
+            _hotkeyRetryCts?.Dispose();
+        }
+        catch { }
+        finally
+        {
+            _hotkeyRetryCts = null;
+        }
+    }
+
+    private void UpdateHotKeyUi(int retryCount = 0)
     {
         if (HotkeyStatusLabel != null)
         {
-            HotkeyStatusLabel.Text = _isHotKeyRegistered
-                ? $"Quick-mute hotkey: {_activeHotKeyDescription}"
-                : "Quick-mute hotkey: In use by another app";
+            if (_isHotKeyRegistered)
+            {
+                HotkeyStatusLabel.Text = $"Quick-mute hotkey: {_activeHotKeyDescription}";
+            }
+            else if (retryCount > 0 && retryCount < MaxHotKeyRetries)
+            {
+                HotkeyStatusLabel.Text = "Quick-mute hotkey: In use by another app (retrying...)";
+            }
+            else
+            {
+                HotkeyStatusLabel.Text = "Quick-mute hotkey: In use by another app";
+            }
         }
     }
 
@@ -561,6 +595,12 @@ public partial class MainWindow : Window, IDisposable
         InitializeAudio();
         RefreshSoundPackList();
         UpdateTrayMenu();
+
+        if (!_isHotKeyRegistered)
+        {
+            RegisterGlobalHotKey(0);
+        }
+
         MessageBox.Show("Sound packs refreshed from disk.", "KeySmash", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
@@ -664,6 +704,11 @@ public partial class MainWindow : Window, IDisposable
         Topmost = true;
         Topmost = false;
         Focus();
+
+        if (!_isHotKeyRegistered)
+        {
+            RegisterGlobalHotKey(0);
+        }
     }
 
     public void PrepareForShutdown()
@@ -805,6 +850,7 @@ public partial class MainWindow : Window, IDisposable
 
             try
             {
+                CancelPendingHotKeyRetry();
                 var helper = new WindowInteropHelper(this);
                 if (_isHotKeyRegistered && helper.Handle != nint.Zero)
                 {

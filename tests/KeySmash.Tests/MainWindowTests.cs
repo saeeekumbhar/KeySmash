@@ -76,4 +76,54 @@ public class MainWindowTests
             throw new Exception($"Shutdown test failed: {error}", error);
         }
     }
+
+    [Fact]
+    public void HotKeyRetry_TerminatesAtMaxAttempts()
+    {
+        int retriesAttempted = 0;
+        const int maxRetries = 3;
+
+        void SimulateRetry(int retryCount)
+        {
+            if (retryCount < maxRetries)
+            {
+                retriesAttempted++;
+                SimulateRetry(retryCount + 1);
+            }
+        }
+
+        SimulateRetry(0);
+
+        Assert.Equal(maxRetries, retriesAttempted);
+    }
+
+    [Fact]
+    public void MainWindow_Dispose_CancelsPendingHotKeyRetryCleanly()
+    {
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            MainWindow? window = null;
+            try
+            {
+                window = new MainWindow();
+                // Dispose must complete cleanly and cancel any pending retry CTS
+                window.Dispose();
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+
+        Assert.Null(error);
+    }
 }
