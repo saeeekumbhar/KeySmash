@@ -83,7 +83,8 @@ public class SettingsTests
             MasterVolume = 0.42f,
             SelectedSoundPack = "Mechanical",
             Randomize = false,
-            StartWithWindows = true
+            StartWithWindows = true,
+            IsMuted = true
         };
 
         var json = JsonSerializer.Serialize(original);
@@ -95,6 +96,7 @@ public class SettingsTests
         Assert.Equal("Mechanical", restored.SelectedSoundPack);
         Assert.False(restored.Randomize);
         Assert.True(restored.StartWithWindows);
+        Assert.True(restored.IsMuted);
     }
 
     [Fact]

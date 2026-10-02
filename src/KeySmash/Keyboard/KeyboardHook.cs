@@ -88,10 +88,10 @@ public sealed class KeyboardHook : IDisposable
         }
     }
 
-    public void Start()
+    public bool Start()
     {
         if (_hookId != nint.Zero)
-            return;
+            return true;
 
         ResetKeyState();
 
@@ -100,6 +100,7 @@ public sealed class KeyboardHook : IDisposable
         var moduleHandle = curModule?.BaseAddress ?? nint.Zero;
 
         _hookId = SetWindowsHookEx(WhKeyboardLl, _proc, moduleHandle, 0);
+        return _hookId != nint.Zero;
     }
 
     public void Stop()
@@ -114,89 +115,96 @@ public sealed class KeyboardHook : IDisposable
 
     private nint HookCallback(int nCode, nint wParam, nint lParam)
     {
-        if (nCode >= 0)
+        if (nCode >= 0 && lParam != nint.Zero)
         {
-            var msg = (int)wParam;
-            if (msg == WmKeydown || msg == WmSyskeydown)
+            try
             {
-                var vkCode = (uint)Marshal.ReadInt32(lParam);
-                bool isRepeat = false;
-                if (vkCode < 256)
+                var msg = (int)wParam;
+                if (msg == WmKeydown || msg == WmSyskeydown)
                 {
-                    isRepeat = _isKeyDown[vkCode];
-                    _isKeyDown[vkCode] = true;
-                }
-
-                long now = Stopwatch.GetTimestamp();
-                var lastKeyTime = vkCode < 256 ? _lastKeyDownTimestamp[vkCode] : 0;
-                var elapsedPerKeyMs = lastKeyTime > 0 ? (now - lastKeyTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
-
-                // Recover from missed WM_KEYUP (e.g. Win+L lock screen, Alt+Tab, UAC prompt, or focus transitions)
-                if (isRepeat)
-                {
-                    bool isPhysicallyPressed = (GetAsyncKeyState((int)vkCode) & 0x8000) != 0;
-                    // Windows auto-repeat typematic delay never exceeds 1000ms. If elapsed > 1000ms or
-                    // hardware indicates the key was released, treat as a fresh press.
-                    if (!isPhysicallyPressed || elapsedPerKeyMs > 1000)
-                    {
-                        isRepeat = false;
-                    }
-                }
-
-                bool allowTrigger = false;
-
-                if (!isRepeat)
-                {
-                    // Per-key debounce: suppress switch bounce/chatter on the same key without dropping fast finger rolls
-                    if (elapsedPerKeyMs >= _minIntervalMs)
-                    {
-                        allowTrigger = true;
-                    }
-                }
-                else if (!SuppressHeldKeyRepeats)
-                {
-                    if (elapsedPerKeyMs >= _minIntervalMs)
-                    {
-                        allowTrigger = true;
-                    }
-                }
-                else if (vkCode == 0x08 || vkCode == 0x2E) // Backspace or Delete
-                {
-                    // Allow smooth, pleasant pacing when deleting text (90ms)
-                    if (elapsedPerKeyMs >= 90)
-                    {
-                        allowTrigger = true;
-                    }
-                }
-                // All other keys (WASD, letters, numbers, space) are completely silenced while held
-
-                if (allowTrigger)
-                {
+                    var vkCode = (uint)Marshal.ReadInt32(lParam);
+                    bool isRepeat = false;
                     if (vkCode < 256)
                     {
-                        _lastKeyDownTimestamp[vkCode] = now;
+                        isRepeat = _isKeyDown[vkCode];
+                        _isKeyDown[vkCode] = true;
                     }
 
-                    var category = vkCode switch
-                    {
-                        0x20 => KeyCategory.Space,
-                        0x0D => KeyCategory.Enter,
-                        0x08 => KeyCategory.Backspace,
-                        0x2E => KeyCategory.Backspace,
-                        _ => KeyCategory.General
-                    };
+                    long now = Stopwatch.GetTimestamp();
+                    var lastKeyTime = vkCode < 256 ? _lastKeyDownTimestamp[vkCode] : 0;
+                    var elapsedPerKeyMs = lastKeyTime > 0 ? (now - lastKeyTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
 
-                    // Push to lock-free channel in nanoseconds and return immediately!
-                    _keyChannel.Writer.TryWrite(category);
+                    // Recover from missed WM_KEYUP (e.g. Win+L lock screen, Alt+Tab, UAC prompt, or focus transitions)
+                    if (isRepeat)
+                    {
+                        bool isPhysicallyPressed = (GetAsyncKeyState((int)vkCode) & 0x8000) != 0;
+                        // Windows auto-repeat typematic delay never exceeds 1000ms. If elapsed > 1000ms or
+                        // hardware indicates the key was released, treat as a fresh press.
+                        if (!isPhysicallyPressed || elapsedPerKeyMs > 1000)
+                        {
+                            isRepeat = false;
+                        }
+                    }
+
+                    bool allowTrigger = false;
+
+                    if (!isRepeat)
+                    {
+                        // Per-key debounce: suppress switch bounce/chatter on the same key without dropping fast finger rolls
+                        if (elapsedPerKeyMs >= _minIntervalMs)
+                        {
+                            allowTrigger = true;
+                        }
+                    }
+                    else if (!SuppressHeldKeyRepeats)
+                    {
+                        if (elapsedPerKeyMs >= _minIntervalMs)
+                        {
+                            allowTrigger = true;
+                        }
+                    }
+                    else if (vkCode == 0x08 || vkCode == 0x2E) // Backspace or Delete
+                    {
+                        // Allow smooth, pleasant pacing when deleting text (90ms)
+                        if (elapsedPerKeyMs >= 90)
+                        {
+                            allowTrigger = true;
+                        }
+                    }
+                    // All other keys (WASD, letters, numbers, space) are completely silenced while held
+
+                    if (allowTrigger)
+                    {
+                        if (vkCode < 256)
+                        {
+                            _lastKeyDownTimestamp[vkCode] = now;
+                        }
+
+                        var category = vkCode switch
+                        {
+                            0x20 => KeyCategory.Space,
+                            0x0D => KeyCategory.Enter,
+                            0x08 => KeyCategory.Backspace,
+                            0x2E => KeyCategory.Backspace,
+                            _ => KeyCategory.General
+                        };
+
+                        // Push to lock-free channel in nanoseconds and return immediately!
+                        _keyChannel.Writer.TryWrite(category);
+                    }
+                }
+                else if (msg == WmKeyup || msg == WmSyskeyup)
+                {
+                    var vkCode = (uint)Marshal.ReadInt32(lParam);
+                    if (vkCode < 256)
+                    {
+                        _isKeyDown[vkCode] = false;
+                    }
                 }
             }
-            else if (msg == WmKeyup || msg == WmSyskeyup)
+            catch
             {
-                var vkCode = (uint)Marshal.ReadInt32(lParam);
-                if (vkCode < 256)
-                {
-                    _isKeyDown[vkCode] = false;
-                }
+                // Never let any exception escape into the unmanaged Windows hook chain
             }
         }
 
@@ -207,9 +215,20 @@ public sealed class KeyboardHook : IDisposable
     public void Dispose()
     {
         Stop();
-        _cts.Cancel();
-        _keyChannel.Writer.TryComplete();
-        _cts.Dispose();
+        try
+        {
+            _cts.Cancel();
+            _keyChannel.Writer.TryComplete();
+            _consumerTask.Wait(TimeSpan.FromMilliseconds(500));
+        }
+        catch
+        {
+            // ignore cancellation / timeout exceptions
+        }
+        finally
+        {
+            _cts.Dispose();
+        }
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]

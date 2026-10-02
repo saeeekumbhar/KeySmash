@@ -89,7 +89,13 @@ public partial class MainWindow : Window, IDisposable
         _keyboardHook.SuppressHeldKeyRepeats = _settings.SuppressHeldKeyRepeats;
 
         if (_settings.Enabled)
-            _keyboardHook.Start();
+        {
+            bool started = _keyboardHook.Start();
+            if (!started)
+            {
+                UpdateStatusDisplay(false, hookFailed: true);
+            }
+        }
 
         _isInitializing = false;
     }
@@ -239,6 +245,7 @@ public partial class MainWindow : Window, IDisposable
 
         // apply audio settings
         _soundManager.MasterVolume = _settings.MasterVolume;
+        _soundManager.IsMuted = _settings.IsMuted;
         _soundManager.Randomize = _settings.Randomize;
 
         // select configured pack
@@ -367,7 +374,16 @@ public partial class MainWindow : Window, IDisposable
         DeletePackButton.IsEnabled = _soundManager.SelectedPack is { IsBuiltIn: false };
 
         VolumeSlider.Value = Math.Round(_settings.MasterVolume * 100);
-        VolumeValueLabel.Text = $"{(int)VolumeSlider.Value}%";
+        if (_settings.IsMuted)
+        {
+            MuteButton.Content = "Unmute";
+            VolumeValueLabel.Text = "Muted";
+        }
+        else
+        {
+            MuteButton.Content = "Mute";
+            VolumeValueLabel.Text = $"{(int)VolumeSlider.Value}%";
+        }
 
         RandomizeCheckBox.IsChecked = _settings.Randomize;
         StartupCheckBox.IsChecked = AppSettings.IsStartupRegistered();
@@ -385,11 +401,11 @@ public partial class MainWindow : Window, IDisposable
     {
         if (_isInitializing) return;
 
-        _keyboardHook.Start();
-        _settings.Enabled = true;
+        bool started = _keyboardHook.Start();
+        _settings.Enabled = started;
         _settings.Save();
 
-        UpdateStatusDisplay(true);
+        UpdateStatusDisplay(started, hookFailed: !started);
         UpdateTrayMenu();
     }
 
@@ -405,9 +421,16 @@ public partial class MainWindow : Window, IDisposable
         UpdateTrayMenu();
     }
 
-    private void UpdateStatusDisplay(bool enabled)
+    private void UpdateStatusDisplay(bool enabled, bool hookFailed = false)
     {
-        if (enabled)
+        if (hookFailed)
+        {
+            StatusLabel.Text = "Hook Failed";
+            StatusLabel.Foreground = System.Windows.Media.Brushes.Crimson;
+            if (StatusDetailLabel != null)
+                StatusDetailLabel.Text = "Could not install keyboard hook";
+        }
+        else if (enabled)
         {
             StatusLabel.Text = "Active";
             StatusLabel.Foreground = (SolidColorBrush)FindResource("SuccessBrush");
@@ -457,6 +480,7 @@ public partial class MainWindow : Window, IDisposable
         if (_soundManager.IsMuted && volPct > 0)
         {
             _soundManager.IsMuted = false;
+            _settings.IsMuted = false;
             MuteButton.Content = "Mute";
             if (VolumeValueLabel != null)
                 VolumeValueLabel.Text = $"{volPct}%";
@@ -464,17 +488,20 @@ public partial class MainWindow : Window, IDisposable
         else if (volPct == 0 && !_soundManager.IsMuted)
         {
             _soundManager.IsMuted = true;
+            _settings.IsMuted = true;
             MuteButton.Content = "Unmute";
             if (VolumeValueLabel != null)
                 VolumeValueLabel.Text = "Muted";
         }
         else if (_soundManager.IsMuted)
         {
+            _settings.IsMuted = true;
             if (VolumeValueLabel != null)
                 VolumeValueLabel.Text = "Muted";
         }
         else
         {
+            _settings.IsMuted = false;
             if (VolumeValueLabel != null)
                 VolumeValueLabel.Text = $"{volPct}%";
         }
@@ -492,6 +519,7 @@ public partial class MainWindow : Window, IDisposable
     private void ToggleMute()
     {
         _soundManager.IsMuted = !_soundManager.IsMuted;
+        _settings.IsMuted = _soundManager.IsMuted;
 
         if (_soundManager.IsMuted)
         {
@@ -509,6 +537,7 @@ public partial class MainWindow : Window, IDisposable
             VolumeValueLabel.Text = $"{(int)VolumeSlider.Value}%";
         }
 
+        RequestSettingsSave();
         UpdateTrayMenu();
     }
 

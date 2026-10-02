@@ -17,6 +17,7 @@ public sealed class AppSettings
     public bool StartWithWindows { get; set; }
     public bool MinimizeToTrayOnClose { get; set; } = true;
     public bool SuppressHeldKeyRepeats { get; set; } = true;
+    public bool IsMuted { get; set; }
 
     [JsonIgnore]
     public static string SettingsDirectory =>

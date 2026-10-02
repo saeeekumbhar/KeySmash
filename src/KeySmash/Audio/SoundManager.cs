@@ -243,7 +243,8 @@ public sealed class SoundManager : IDisposable
         {
             foreach (var subDir in Directory.GetDirectories(directoryPath))
             {
-                var packName = Path.GetFileName(subDir);
+                var rawSubDirName = Path.GetFileName(subDir);
+                var packName = isBuiltIn ? rawSubDirName : ResolveSafePackName(rawSubDirName, "Custom");
                 var pack = LoadPackFromFolder(subDir, packName, isBuiltIn);
                 if (pack != null && (pack.Samples.Count > 0 || pack.SpaceSamples.Count > 0))
                 {
@@ -300,29 +301,51 @@ public sealed class SoundManager : IDisposable
             .OrderBy(f => f)
             .ToList();
 
+        // Limit maximum samples loaded per category to prevent unbounded memory churn
+        const int maxSamplesPerCategory = 64;
+
         foreach (var file in files)
         {
             try
             {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                var parentDir = Path.GetFileName(Path.GetDirectoryName(file)) ?? string.Empty;
+
+                bool isSpace = fileName.StartsWith("space", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(parentDir, "space", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(parentDir, "spaces", StringComparison.OrdinalIgnoreCase);
+
+                bool isEnter = fileName.StartsWith("enter", StringComparison.OrdinalIgnoreCase) ||
+                               fileName.StartsWith("return", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(parentDir, "enter", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(parentDir, "return", StringComparison.OrdinalIgnoreCase);
+
+                bool isBackspace = fileName.StartsWith("backspace", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("delete", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("del", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(parentDir, "backspace", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(parentDir, "delete", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(parentDir, "del", StringComparison.OrdinalIgnoreCase);
+
+                if (isSpace && pack.SpaceSamples.Count >= maxSamplesPerCategory) continue;
+                if (isEnter && pack.EnterSamples.Count >= maxSamplesPerCategory) continue;
+                if (isBackspace && pack.BackspaceSamples.Count >= maxSamplesPerCategory) continue;
+                if (!isSpace && !isEnter && !isBackspace && pack.Samples.Count >= maxSamplesPerCategory) continue;
+
                 var cached = new CachedSound(file);
                 if (cached.AudioData.Length == 0)
                     continue;
 
-                var fileName = Path.GetFileNameWithoutExtension(file);
-
-                if (fileName.StartsWith("space", StringComparison.OrdinalIgnoreCase))
+                if (isSpace)
                 {
                     pack.SpaceSamples.Add(cached);
                 }
-                else if (fileName.StartsWith("enter", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.StartsWith("return", StringComparison.OrdinalIgnoreCase))
+                else if (isEnter)
                 {
                     pack.EnterSamples.Add(cached);
                 }
-                else if (fileName.StartsWith("backspace", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.StartsWith("delete", StringComparison.OrdinalIgnoreCase) ||
-                         fileName.StartsWith("del", StringComparison.OrdinalIgnoreCase))
+                else if (isBackspace)
                 {
                     pack.BackspaceSamples.Add(cached);
                 }
@@ -477,7 +500,10 @@ public sealed class SoundManager : IDisposable
                 Directory.CreateDirectory(packDir);
 
                 // Extract ONLY safe files (audio and metadata), rejecting all executables/scripts
+                // Use streaming decompression byte tracking to protect against zip bomb expansion
                 int extractedAudioCount = 0;
+                long totalStreamedBytes = 0;
+
                 foreach (var entry in archive.Entries)
                 {
                     if (string.IsNullOrEmpty(entry.Name))
@@ -494,7 +520,26 @@ public sealed class SoundManager : IDisposable
                         Directory.CreateDirectory(entryDir);
                     }
 
-                    entry.ExtractToFile(destPath, overwrite: true);
+                    using (var sourceStream = entry.Open())
+                    using (var destStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        var copyBuffer = new byte[81920];
+                        int readBytes;
+                        long fileStreamedBytes = 0;
+
+                        while ((readBytes = sourceStream.Read(copyBuffer, 0, copyBuffer.Length)) > 0)
+                        {
+                            fileStreamedBytes += readBytes;
+                            totalStreamedBytes += readBytes;
+
+                            if (fileStreamedBytes > maxSingleFileBytes || totalStreamedBytes > maxTotalUncompressedBytes)
+                            {
+                                throw new InvalidDataException("Zip archive exceeded maximum allowable uncompressed size limit.");
+                            }
+
+                            destStream.Write(copyBuffer, 0, readBytes);
+                        }
+                    }
 
                     if (ext.Equals(".wav", StringComparison.OrdinalIgnoreCase) ||
                         ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase) ||
@@ -512,7 +557,7 @@ public sealed class SoundManager : IDisposable
                 }
             }
 
-            // If the zip contained a single nested root folder, flatten it
+            // If the zip contained a single nested root folder, flatten it while preserving relative subpaths
             var subDirs = Directory.GetDirectories(packDir);
             var rootFiles = Directory.GetFiles(packDir);
             if (rootFiles.Length == 0 && subDirs.Length == 1)
@@ -520,7 +565,13 @@ public sealed class SoundManager : IDisposable
                 var nestedDir = subDirs[0];
                 foreach (var file in Directory.GetFiles(nestedDir, "*.*", SearchOption.AllDirectories))
                 {
-                    var dest = Path.Combine(packDir, Path.GetFileName(file));
+                    var relative = Path.GetRelativePath(nestedDir, file);
+                    var dest = Path.Combine(packDir, relative);
+                    var parent = Path.GetDirectoryName(dest);
+                    if (!string.IsNullOrEmpty(parent))
+                    {
+                        Directory.CreateDirectory(parent);
+                    }
                     File.Move(file, dest, overwrite: true);
                 }
                 try { Directory.Delete(nestedDir, true); } catch { }
@@ -556,14 +607,15 @@ public sealed class SoundManager : IDisposable
         return false;
     }
 
-    public bool DeleteCustomPack(SoundPack pack)
+    public bool DeleteCustomPack(SoundPack pack, string? baseUserSoundsDir = null)
     {
         if (pack.IsBuiltIn || string.IsNullOrEmpty(pack.DirectoryPath))
             return false;
 
         try
         {
-            var userSoundsRoot = Path.GetFullPath(AppSettings.UserSoundsDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var soundsDir = baseUserSoundsDir ?? AppSettings.UserSoundsDirectory;
+            var userSoundsRoot = Path.GetFullPath(soundsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var targetPackDir = Path.GetFullPath(pack.DirectoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
             bool isRootSoundsFolder = string.Equals(userSoundsRoot, targetPackDir, StringComparison.OrdinalIgnoreCase) ||
@@ -590,6 +642,13 @@ public sealed class SoundManager : IDisposable
                     }
                 }
                 return true;
+            }
+
+            // Security jail: target directory must strictly be a child subdirectory within the user sounds directory
+            var expectedPrefix = userSoundsRoot + Path.DirectorySeparatorChar;
+            if (!targetPackDir.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
             }
 
             // Guard against deleting system root or profile directories
@@ -660,13 +719,23 @@ public sealed class SoftLimiterSampleProvider : ISampleProvider
     public int Read(float[] buffer, int offset, int count)
     {
         int read = _source.Read(buffer, offset, count);
+        const float threshold = 0.85f;
+        const float margin = 0.15f;
+        const float marginSq = margin * margin;
+
         for (int i = 0; i < read; i++)
         {
             float s = buffer[offset + i];
-            // Hyperbolic tangent soft saturation prevents digital clipping pops
-            if (s > 0.85f || s < -0.85f)
+            // Continuous C1-smooth soft-knee saturation prevents popping and digital clipping
+            if (s > threshold)
             {
-                buffer[offset + i] = (float)Math.Tanh(s);
+                float diff = s - threshold;
+                buffer[offset + i] = threshold + diff / MathF.Sqrt(1f + (diff * diff) / marginSq);
+            }
+            else if (s < -threshold)
+            {
+                float diff = -s - threshold;
+                buffer[offset + i] = -(threshold + diff / MathF.Sqrt(1f + (diff * diff) / marginSq));
             }
         }
         return read;

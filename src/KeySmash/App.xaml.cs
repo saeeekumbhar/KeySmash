@@ -55,6 +55,7 @@ public partial class App : Application
         // Create IPC event handle for subsequent instance activation
         try
         {
+            long lastRestoreTimestamp = 0;
             _showEventHandle = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
             _listenerThread = new Thread(() =>
             {
@@ -64,6 +65,15 @@ public partial class App : Application
                     {
                         if (_showEventHandle.WaitOne())
                         {
+                            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                            var elapsed = (now - lastRestoreTimestamp) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                            // Rate limit restoration triggers to at most once per 1000ms to eliminate focus-stealing loops
+                            if (elapsed < 1000)
+                            {
+                                continue;
+                            }
+                            lastRestoreTimestamp = now;
+
                             Current?.Dispatcher?.Invoke(() =>
                             {
                                 if (Current.MainWindow is MainWindow mw)

@@ -109,7 +109,8 @@ public class SoundManagerTests
     {
         using var manager = new SoundManager();
 
-        var tempDir = Path.Combine(Path.GetTempPath(), $"pack_del_{Guid.NewGuid()}");
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"user_sounds_{Guid.NewGuid()}");
+        var tempDir = Path.Combine(tempRoot, "CustomToDelete");
         Directory.CreateDirectory(tempDir);
         File.WriteAllText(Path.Combine(tempDir, "dummy.wav"), "not a real wav");
 
@@ -117,11 +118,48 @@ public class SoundManagerTests
         manager.SoundPacks.Add(pack);
         manager.SelectedPack = pack;
 
-        var deleted = manager.DeleteCustomPack(pack);
+        try
+        {
+            var deleted = manager.DeleteCustomPack(pack, baseUserSoundsDir: tempRoot);
 
-        Assert.True(deleted);
-        Assert.False(Directory.Exists(tempDir));
-        Assert.DoesNotContain(pack, manager.SoundPacks);
+            Assert.True(deleted);
+            Assert.False(Directory.Exists(tempDir));
+            Assert.DoesNotContain(pack, manager.SoundPacks);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, true);
+        }
+    }
+
+    [Fact]
+    public void DeleteCustomPack_RejectsDirectoryOutsideUserSoundsRoot()
+    {
+        using var manager = new SoundManager();
+
+        var outsideDir = Path.Combine(Path.GetTempPath(), $"outside_{Guid.NewGuid()}");
+        Directory.CreateDirectory(outsideDir);
+        File.WriteAllText(Path.Combine(outsideDir, "dummy.wav"), "not a real wav");
+
+        var pack = new SoundPack("OutsidePack", outsideDir, isBuiltIn: false);
+        manager.SoundPacks.Add(pack);
+        manager.SelectedPack = pack;
+
+        try
+        {
+            // Should be rejected by the security jail because outsideDir is not inside AppSettings.UserSoundsDirectory
+            var deleted = manager.DeleteCustomPack(pack);
+
+            Assert.False(deleted);
+            Assert.True(Directory.Exists(outsideDir));
+            Assert.Contains(pack, manager.SoundPacks);
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDir))
+                Directory.Delete(outsideDir, true);
+        }
     }
 
     [Fact]
@@ -392,6 +430,95 @@ public class SoundManagerTests
         // Auxiliary channels mixed in
         Assert.True(buffer[0] > 0.4f);
         Assert.True(buffer[1] > 0.4f);
+    }
+
+    [Fact]
+    public void SoftLimiter_TransitionsSmoothlyAroundThresholdWithoutPops()
+    {
+        var dummyFormat = NAudio.Wave.WaveFormat.CreateIeeeFloatWaveFormat(44100, 2);
+        // Test points right at and slightly above/below the 0.85f threshold
+        var source = new DummySampleProvider(dummyFormat, [0.84f, 0.85f, 0.86f, -0.86f]);
+        var limiter = new SoftLimiterSampleProvider(source);
+
+        var buffer = new float[4];
+        int read = limiter.Read(buffer, 0, 4);
+
+        Assert.Equal(4, read);
+        // 0.84f is below threshold -> untouched
+        Assert.Equal(0.84f, buffer[0]);
+        // 0.85f is at threshold -> untouched (no pop)
+        Assert.Equal(0.85f, buffer[1]);
+        // 0.86f is slightly above threshold -> smoothly saturates strictly above 0.85f and strictly below 0.87f
+        Assert.True(buffer[2] > 0.85f && buffer[2] < 0.87f, $"Expected smooth saturation above 0.85f, but got {buffer[2]}");
+        // -0.86f is symmetric
+        Assert.True(buffer[3] < -0.85f && buffer[3] > -0.87f, $"Expected symmetric saturation below -0.85f, but got {buffer[3]}");
+    }
+
+    [Fact]
+    public void LoadPackFromFolder_CategorizesBySubdirectoryName()
+    {
+        using var manager = new SoundManager();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"pack_subdirs_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var spaceDir = Path.Combine(tempDir, "space");
+            var enterDir = Path.Combine(tempDir, "enter");
+            var delDir = Path.Combine(tempDir, "delete");
+            var generalDir = Path.Combine(tempDir, "keys");
+
+            Directory.CreateDirectory(spaceDir);
+            Directory.CreateDirectory(enterDir);
+            Directory.CreateDirectory(delDir);
+            Directory.CreateDirectory(generalDir);
+
+            CreateDummyWav(Path.Combine(spaceDir, "01.wav"));
+            CreateDummyWav(Path.Combine(enterDir, "01.wav"));
+            CreateDummyWav(Path.Combine(delDir, "01.wav"));
+            CreateDummyWav(Path.Combine(generalDir, "01.wav"));
+
+            var pack = manager.LoadPackFromFolder(tempDir, "SubdirPack", isBuiltIn: false);
+
+            Assert.NotNull(pack);
+            Assert.Single(pack.SpaceSamples);
+            Assert.Single(pack.EnterSamples);
+            Assert.Single(pack.BackspaceSamples);
+            Assert.Single(pack.Samples);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void LoadPacksFromDirectory_ProtectsBuiltInPackNamesFromCollision()
+    {
+        using var manager = new SoundManager();
+        var builtInPack = new SoundPack("Typewriter", isBuiltIn: true);
+        manager.SoundPacks.Add(builtInPack);
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"custom_sounds_{Guid.NewGuid()}");
+        var collidingDir = Path.Combine(tempDir, "Typewriter");
+        Directory.CreateDirectory(collidingDir);
+
+        try
+        {
+            CreateDummyWav(Path.Combine(collidingDir, "custom_click.wav"));
+
+            manager.LoadPacksFromDirectory(tempDir, isBuiltIn: false);
+
+            // Both packs must exist: the built-in must NOT be removed, and the custom must be renamed safely
+            Assert.Contains(manager.SoundPacks, p => p.Name == "Typewriter" && p.IsBuiltIn);
+            Assert.Contains(manager.SoundPacks, p => p.Name == "Typewriter (Custom)" && !p.IsBuiltIn);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
     }
 
     private sealed class DummySampleProvider : NAudio.Wave.ISampleProvider
