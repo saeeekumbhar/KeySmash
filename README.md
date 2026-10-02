@@ -16,10 +16,10 @@ KeySmash is a lightweight Windows desktop utility that plays custom sound effect
 * **Built-in Sound Packs**: Includes original, copyright-free sound packs out of the box (`Typewriter`, `Mechanical`, `Bubble`, and `Shotgun`).
 * **Sound Pack Management**: Import individual audio files (`.wav`, `.mp3`) or bundled sound packs (`.zip`), auto-detect loose sound files, and delete custom packs directly from the UI.
 * **Volume & Mute Control**: Fluid, draggable master volume slider synchronized with mute states and system tray controls.
-* **Single-Instance Bring-to-Front**: Duplicate launches seamlessly focus the existing window instead of creating duplicate background processes.
-* **System Tray Operation**: Minimizes to the notification tray to stay out of your way while typing.
+* **Dynamic System Tray Status**: Minimizes to the notification tray with live state-aware icon changes (active illuminated dot vs dimmed slashed icon when muted or paused) and glanceable tooltip indicators.
+* **Optional Modifier Key Audio**: Choose whether modifier keys (<kbd>Ctrl</kbd>, <kbd>Shift</kbd>, <kbd>Alt</kbd>, <kbd>Win</kbd>, <kbd>CapsLock</kbd>) trigger mechanical feedback or remain silent.
 * **Optional Windows Startup**: Start automatically when Windows boots with live registry synchronization.
-* **Strict Privacy**: Discards keyboard events immediately after triggering audio. Zero keylogging, zero telemetry, 100% offline.
+* **Strict Privacy & Security**: Discards keyboard events immediately after triggering audio. Zero keylogging, zero telemetry, 100% offline, and zero administrator privileges required.
 
 ---
 

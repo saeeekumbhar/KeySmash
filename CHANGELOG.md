@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Dynamic system tray icon state: live visual indication of audio activity, dynamically swapping between the active illuminated icon and a dimmed slashed icon when paused or muted.
+- Dedicated modifier keys toggle (`PlayModifierKeys`): allows users to configure whether modifier keys (<kbd>Ctrl</kbd>, <kbd>Shift</kbd>, <kbd>Alt</kbd>, <kbd>Win</kbd>, <kbd>CapsLock</kbd>) trigger mechanical feedback or remain silent.
+
 ### Fixed
 - Fixed directory traversal and arbitrary deletion security vulnerability in `DeleteCustomPack` by enforcing strict user sounds jail boundaries.
 - Replaced discontinuous threshold saturation with continuous C1-smooth algebraic sigmoid soft limiter, eliminating audible popping artifacts above 0.85 amplitude.

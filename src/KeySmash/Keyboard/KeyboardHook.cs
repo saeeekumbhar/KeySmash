@@ -28,6 +28,7 @@ public sealed class KeyboardHook : IDisposable
     private readonly bool[] _isKeyDown = new bool[256];
     private readonly long[] _lastKeyDownTimestamp = new long[256];
     public bool SuppressHeldKeyRepeats { get; set; } = true;
+    public bool PlayModifierKeys { get; set; } = true;
 
     public event Action<KeyCategory>? KeyPressed;
 
@@ -61,6 +62,18 @@ public sealed class KeyboardHook : IDisposable
         Array.Clear(_isKeyDown, 0, _isKeyDown.Length);
         Array.Clear(_lastKeyDownTimestamp, 0, _lastKeyDownTimestamp.Length);
     }
+
+    public static bool IsModifierKey(uint vkCode) => vkCode switch
+    {
+        0x10 or 0xA0 or 0xA1 => true, // Shift / LShift / RShift
+        0x11 or 0xA2 or 0xA3 => true, // Ctrl / LCtrl / RCtrl
+        0x12 or 0xA4 or 0xA5 => true, // Alt / LAlt / RAlt
+        0x5B or 0x5C => true,         // Win / LWin / RWin
+        0x14 => true,                 // CapsLock
+        0x90 => true,                 // NumLock
+        0x91 => true,                 // ScrollLock
+        _ => false
+    };
 
     private async Task ProcessQueueAsync()
     {
@@ -172,6 +185,11 @@ public sealed class KeyboardHook : IDisposable
                         }
                     }
                     // All other keys (WASD, letters, numbers, space) are completely silenced while held
+
+                    if (allowTrigger && !PlayModifierKeys && IsModifierKey(vkCode))
+                    {
+                        allowTrigger = false;
+                    }
 
                     if (allowTrigger)
                     {

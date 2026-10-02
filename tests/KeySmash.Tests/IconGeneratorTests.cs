@@ -93,4 +93,19 @@ public class IconGeneratorTests
         Assert.True(File.Exists(assetsIcon));
         Assert.True(File.Exists(srcIcon));
     }
+
+    [Fact]
+    public void TrayIconFactory_CreatesValidActiveAndDimmedIcons()
+    {
+        using var activeIcon = TrayIconFactory.CreateKeySmashIcon(active: true);
+        using var dimmedIcon = TrayIconFactory.CreateKeySmashIcon(active: false);
+
+        Assert.NotNull(activeIcon);
+        Assert.Equal(32, activeIcon.Width);
+        Assert.Equal(32, activeIcon.Height);
+
+        Assert.NotNull(dimmedIcon);
+        Assert.Equal(32, dimmedIcon.Width);
+        Assert.Equal(32, dimmedIcon.Height);
+    }
 }

@@ -76,4 +76,37 @@ public class KeyboardDebounceTests
 
         Assert.Equal(shouldRecover, !isRepeat);
     }
+
+    [Fact]
+    public void PlayModifierKeys_DefaultsToTrue()
+    {
+        using var hook = new KeyboardHook();
+        Assert.True(hook.PlayModifierKeys);
+    }
+
+    [Theory]
+    [InlineData(0x10, true)]  // Shift
+    [InlineData(0xA0, true)]  // LShift
+    [InlineData(0xA1, true)]  // RShift
+    [InlineData(0x11, true)]  // Ctrl
+    [InlineData(0xA2, true)]  // LCtrl
+    [InlineData(0xA3, true)]  // RCtrl
+    [InlineData(0x12, true)]  // Alt
+    [InlineData(0xA4, true)]  // LAlt
+    [InlineData(0xA5, true)]  // RAlt
+    [InlineData(0x5B, true)]  // LWin
+    [InlineData(0x5C, true)]  // RWin
+    [InlineData(0x14, true)]  // CapsLock
+    [InlineData(0x90, true)]  // NumLock
+    [InlineData(0x91, true)]  // ScrollLock
+    [InlineData(0x20, false)] // Space
+    [InlineData(0x0D, false)] // Enter
+    [InlineData(0x08, false)] // Backspace
+    [InlineData(0x41, false)] // 'A'
+    [InlineData(0x31, false)] // '1'
+    public void IsModifierKey_CorrectlyClassifiesVirtualKeyCodes(uint vkCode, bool expectedIsModifier)
+    {
+        var result = KeyboardHook.IsModifierKey(vkCode);
+        Assert.Equal(expectedIsModifier, result);
+    }
 }

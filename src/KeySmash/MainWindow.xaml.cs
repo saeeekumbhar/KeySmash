@@ -26,6 +26,8 @@ public partial class MainWindow : Window, IDisposable
     private readonly SoundManager _soundManager = new();
     private readonly AppSettings _settings;
     private Forms.NotifyIcon? _notifyIcon;
+    private System.Drawing.Icon? _activeTrayIcon;
+    private System.Drawing.Icon? _dimmedTrayIcon;
     private bool _isExiting;
     private bool _isInitializing = true;
     private bool _isHotKeyRegistered;
@@ -87,6 +89,7 @@ public partial class MainWindow : Window, IDisposable
 
         _keyboardHook.KeyPressed += OnKeyPressed;
         _keyboardHook.SuppressHeldKeyRepeats = _settings.SuppressHeldKeyRepeats;
+        _keyboardHook.PlayModifierKeys = _settings.PlayModifierKeys;
 
         if (_settings.Enabled)
         {
@@ -299,16 +302,12 @@ public partial class MainWindow : Window, IDisposable
     private void InitializeTray()
     {
         var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
-        System.Drawing.Icon? trayIcon = null;
-
         if (File.Exists(iconPath))
         {
-            trayIcon = new System.Drawing.Icon(iconPath);
+            try { _activeTrayIcon = new System.Drawing.Icon(iconPath); } catch { }
         }
-        else
-        {
-            trayIcon = System.Drawing.SystemIcons.Application;
-        }
+        _activeTrayIcon ??= TrayIconFactory.CreateKeySmashIcon(active: true);
+        _dimmedTrayIcon = TrayIconFactory.CreateKeySmashIcon(active: false);
 
         var contextMenu = new Forms.ContextMenuStrip();
 
@@ -353,9 +352,10 @@ public partial class MainWindow : Window, IDisposable
         contextMenu.Items.Add(openItem);
         contextMenu.Items.Add(exitItem);
 
+        bool isOperational = _settings.Enabled && !_soundManager.IsMuted;
         _notifyIcon = new Forms.NotifyIcon
         {
-            Icon = trayIcon,
+            Icon = isOperational ? _activeTrayIcon : _dimmedTrayIcon,
             Text = "KeySmash - Keyboard Sound Utility",
             ContextMenuStrip = contextMenu,
             Visible = true
@@ -389,6 +389,7 @@ public partial class MainWindow : Window, IDisposable
         StartupCheckBox.IsChecked = AppSettings.IsStartupRegistered();
         MinimizeToTrayCheckBox.IsChecked = _settings.MinimizeToTrayOnClose;
         SuppressRepeatCheckBox.IsChecked = _settings.SuppressHeldKeyRepeats;
+        ModifierKeysCheckBox.IsChecked = _settings.PlayModifierKeys;
     }
 
     private void OnKeyPressed(KeyCategory category)
@@ -689,6 +690,16 @@ public partial class MainWindow : Window, IDisposable
         _settings.Save();
     }
 
+    private void ModifierKeysCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isInitializing) return;
+
+        var playModifiers = ModifierKeysCheckBox.IsChecked ?? true;
+        _settings.PlayModifierKeys = playModifiers;
+        _keyboardHook.PlayModifierKeys = playModifiers;
+        _settings.Save();
+    }
+
     private void ExitButton_Click(object sender, RoutedEventArgs e)
     {
         ExitApplication();
@@ -705,12 +716,35 @@ public partial class MainWindow : Window, IDisposable
         if (_traySoundItem != null)
             _traySoundItem.Text = $"Sound: {_soundManager.SelectedPack?.Name ?? "None"}";
 
+        var volPct = (int)Math.Round(_soundManager.MasterVolume * 100);
         if (_trayVolumeItem != null)
         {
-            var volPct = (int)Math.Round(_soundManager.MasterVolume * 100);
             _trayVolumeItem.Text = _soundManager.IsMuted
                 ? $"Volume: {volPct}% (Muted)"
                 : $"Volume: {volPct}%";
+        }
+
+        if (_notifyIcon != null)
+        {
+            bool isOperational = _settings.Enabled && !_soundManager.IsMuted;
+            _notifyIcon.Icon = isOperational ? _activeTrayIcon : _dimmedTrayIcon;
+
+            string statusText;
+            if (!_settings.Enabled)
+            {
+                statusText = "KeySmash - Paused";
+            }
+            else if (_soundManager.IsMuted)
+            {
+                statusText = "KeySmash - Muted";
+            }
+            else
+            {
+                var packName = _soundManager.SelectedPack?.Name ?? "Active";
+                statusText = $"KeySmash - {packName} ({volPct}%)";
+            }
+
+            _notifyIcon.Text = statusText.Length > 63 ? statusText[..63] : statusText;
         }
     }
 
@@ -910,6 +944,10 @@ public partial class MainWindow : Window, IDisposable
                     _notifyIcon.Dispose();
                     _notifyIcon = null;
                 }
+                _activeTrayIcon?.Dispose();
+                _activeTrayIcon = null;
+                _dimmedTrayIcon?.Dispose();
+                _dimmedTrayIcon = null;
             }
             catch { }
         }

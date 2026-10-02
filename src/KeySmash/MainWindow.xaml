@@ -308,6 +308,11 @@
                                   Style="{StaticResource ModernCheckBox}"
                                   Margin="0,0,0,8"
                                   Checked="SuppressRepeatCheckBox_Changed" Unchecked="SuppressRepeatCheckBox_Changed"/>
+                        <CheckBox x:Name="ModifierKeysCheckBox"
+                                  Content="play sounds on modifier keys (Ctrl, Shift, Alt, Win)"
+                                  Style="{StaticResource ModernCheckBox}"
+                                  Margin="0,0,0,8"
+                                  Checked="ModifierKeysCheckBox_Changed" Unchecked="ModifierKeysCheckBox_Changed"/>
                         <TextBlock x:Name="HotkeyStatusLabel"
                                    Text="Quick-mute hotkey: Ctrl + Shift + M"
                                    FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
