@@ -521,6 +521,125 @@ public class SoundManagerTests
         }
     }
 
+    [Fact]
+    public void CachedSound_SanitizesNaNAndInfinitySamples()
+    {
+        var rawData = new float[] { 0.5f, float.NaN, float.PositiveInfinity, float.NegativeInfinity, -0.5f };
+        var cached = new CachedSound(rawData);
+
+        Assert.Equal(0.5f, cached.AudioData[0]);
+        Assert.Equal(0.0f, cached.AudioData[1]);
+        Assert.Equal(0.0f, cached.AudioData[2]);
+        Assert.Equal(0.0f, cached.AudioData[3]);
+        Assert.Equal(-0.5f, cached.AudioData[4]);
+    }
+
+    [Fact]
+    public void LoadPackFromFolder_DistinguishesBackslashAndBacktickFromBackspace()
+    {
+        using var manager = new SoundManager();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"pack_keys_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            CreateDummyWav(Path.Combine(tempDir, "backslash.wav"));
+            CreateDummyWav(Path.Combine(tempDir, "backtick.wav"));
+            CreateDummyWav(Path.Combine(tempDir, "backquote.wav"));
+            CreateDummyWav(Path.Combine(tempDir, "backspace.wav"));
+
+            var pack = manager.LoadPackFromFolder(tempDir, "KeyDistinctionPack", isBuiltIn: false);
+
+            Assert.NotNull(pack);
+            // Only backspace.wav must be in BackspaceSamples!
+            Assert.Single(pack.BackspaceSamples);
+            // backslash, backtick, backquote must be in Samples (general)!
+            Assert.Equal(3, pack.Samples.Count);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ImportCustomZip_AcceptsZipWithRootDirectoryEntries()
+    {
+        using var manager = new SoundManager();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"zip_root_entry_{Guid.NewGuid()}");
+        var userSoundsDir = Path.Combine(tempDir, "sounds");
+        var zipPath = Path.Combine(tempDir, "RootEntryPack.zip");
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(userSoundsDir);
+
+        try
+        {
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                // Add empty/root directory entry simulating 7-Zip or macOS Archive Utility
+                archive.CreateEntry("./");
+                var clickEntry = archive.CreateEntry("click.wav");
+                using var ms = new MemoryStream();
+                using var bw = new BinaryWriter(ms);
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+                bw.Write(36 + 8820);
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+                bw.Write(16);
+                bw.Write((short)1);
+                bw.Write((short)1);
+                bw.Write(44100);
+                bw.Write(44100 * 2);
+                bw.Write((short)2);
+                bw.Write((short)16);
+                bw.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+                bw.Write(8820);
+                bw.Write(new byte[8820]);
+                using var entryStream = clickEntry.Open();
+                entryStream.Write(ms.ToArray());
+            }
+
+            var imported = manager.ImportCustomZip(zipPath, userSoundsDir);
+
+            Assert.True(imported);
+            Assert.NotNull(manager.SelectedPack);
+            Assert.Equal("RootEntryPack", manager.SelectedPack.Name);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ImportCustomSoundFile_CleansUpOrphanedFileOnInvalidAudio()
+    {
+        using var manager = new SoundManager();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"import_invalid_{Guid.NewGuid()}");
+        var userSoundsDir = Path.Combine(tempDir, "sounds");
+        var invalidAudioFile = Path.Combine(tempDir, "not_audio.wav");
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(userSoundsDir);
+        File.WriteAllText(invalidAudioFile, "corrupted content not an audio file");
+
+        try
+        {
+            var imported = manager.ImportCustomSoundFile(invalidAudioFile, "CorruptPack", userSoundsDir);
+
+            Assert.False(imported);
+            var packFolder = Path.Combine(userSoundsDir, "CorruptPack");
+            // Must NOT leave orphaned files or empty folder on disk!
+            Assert.False(Directory.Exists(packFolder));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
     private sealed class DummySampleProvider : NAudio.Wave.ISampleProvider
     {
         private readonly float[] _data;

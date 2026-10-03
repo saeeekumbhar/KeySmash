@@ -406,6 +406,13 @@ public partial class MainWindow : Window, IDisposable
         _settings.Enabled = started;
         _settings.Save();
 
+        if (!started)
+        {
+            _isInitializing = true;
+            EnableToggle.IsChecked = false;
+            _isInitializing = false;
+        }
+
         UpdateStatusDisplay(started, hookFailed: !started);
         UpdateTrayMenu();
     }
@@ -559,6 +566,10 @@ public partial class MainWindow : Window, IDisposable
 
     private void PreviewButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_soundManager.IsMuted)
+        {
+            ToggleMute();
+        }
         _soundManager.PreviewSound();
     }
 
@@ -915,16 +926,27 @@ public partial class MainWindow : Window, IDisposable
             {
                 CancelPendingHotKeyRetry();
                 var helper = new WindowInteropHelper(this);
-                if (_isHotKeyRegistered && helper.Handle != nint.Zero)
+                if (helper.Handle != nint.Zero)
                 {
-                    UnregisterHotKey(helper.Handle, MuteHotKeyId);
-                    _isHotKeyRegistered = false;
+                    try
+                    {
+                        var source = HwndSource.FromHwnd(helper.Handle);
+                        source?.RemoveHook(HwndHook);
+                    }
+                    catch { }
+
+                    if (_isHotKeyRegistered)
+                    {
+                        UnregisterHotKey(helper.Handle, MuteHotKeyId);
+                        _isHotKeyRegistered = false;
+                    }
                 }
             }
             catch { }
 
             try
             {
+                _keyboardHook.KeyPressed -= OnKeyPressed;
                 _keyboardHook.Stop();
                 _keyboardHook.Dispose();
             }

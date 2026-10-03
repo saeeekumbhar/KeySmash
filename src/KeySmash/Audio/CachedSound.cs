@@ -33,7 +33,7 @@ public sealed class CachedSound
         const int maxDurationSeconds = 5;
         const int maxSamples = 44100 * 2 * maxDurationSeconds;
 
-        var sampleList = new List<float>();
+        var sampleList = new List<float>(Math.Min(44100 * 2, maxSamples));
         var buffer = new float[4096];
         int count;
 
@@ -41,7 +41,12 @@ public sealed class CachedSound
         {
             var take = Math.Min(count, maxSamples - sampleList.Count);
             for (var i = 0; i < take; i++)
-                sampleList.Add(buffer[i]);
+            {
+                float val = buffer[i];
+                if (float.IsNaN(val) || float.IsInfinity(val))
+                    val = 0f;
+                sampleList.Add(val);
+            }
 
             if (sampleList.Count >= maxSamples)
                 break;
@@ -52,6 +57,13 @@ public sealed class CachedSound
 
     public CachedSound(float[] audioData)
     {
+        for (int i = 0; i < audioData.Length; i++)
+        {
+            if (float.IsNaN(audioData[i]) || float.IsInfinity(audioData[i]))
+            {
+                audioData[i] = 0f;
+            }
+        }
         AudioData = audioData;
     }
 }

@@ -63,18 +63,24 @@ public sealed class AppSettings
     {
         lock (_saveLock)
         {
+            string? tempFilePath = null;
             try
             {
                 Directory.CreateDirectory(SettingsDirectory);
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 var json = JsonSerializer.Serialize(this, options);
-                var tempFilePath = Path.Combine(SettingsDirectory, $"settings.{Guid.NewGuid():N}.tmp");
+                tempFilePath = Path.Combine(SettingsDirectory, $"settings.{Guid.NewGuid():N}.tmp");
                 File.WriteAllText(tempFilePath, json);
                 File.Move(tempFilePath, SettingsFilePath, overwrite: true);
+                tempFilePath = null;
             }
             catch
             {
-                // silently handle disk write errors
+                // silently handle disk write errors and clean up leftover temp file
+                if (tempFilePath != null && File.Exists(tempFilePath))
+                {
+                    try { File.Delete(tempFilePath); } catch { }
+                }
             }
         }
     }

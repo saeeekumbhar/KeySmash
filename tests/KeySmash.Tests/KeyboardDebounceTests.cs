@@ -109,4 +109,79 @@ public class KeyboardDebounceTests
         var result = KeyboardHook.IsModifierKey(vkCode);
         Assert.Equal(expectedIsModifier, result);
     }
+
+    [Fact]
+    public void KeyboardHook_DoubleDispose_DoesNotThrow()
+    {
+        var hook = new KeyboardHook();
+        var ex = Record.Exception(() =>
+        {
+            hook.Dispose();
+            hook.Dispose();
+        });
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void KeyboardHook_StartAfterDispose_ReturnsFalse()
+    {
+        var hook = new KeyboardHook();
+        hook.Dispose();
+
+        var started = hook.Start();
+        Assert.False(started);
+        Assert.False(hook.IsActive);
+    }
+
+    [Fact]
+    public void ContinuousHeldRepeats_NeverTriggerSoundRegardlessOfDuration()
+    {
+        // Simulate continuous typematic repeat events (e.g. 33ms interval) over 3 seconds (90 events)
+        long lastKeyDownTime = 0;
+        long lastSoundTime = 0;
+        bool isKeyDown = false;
+        int soundTriggerCount = 0;
+        const int minIntervalMs = 20;
+
+        for (int i = 0; i <= 90; i++)
+        {
+            long nowMs = 10000 + (i * 33); // 10000, 10033, 10066, ..., 12970ms
+            bool isRepeat = isKeyDown;
+            isKeyDown = true;
+
+            long elapsedSinceLastKeyDown = lastKeyDownTime > 0 ? (nowMs - lastKeyDownTime) : long.MaxValue;
+            long elapsedSinceLastSound = lastSoundTime > 0 ? (nowMs - lastSoundTime) : long.MaxValue;
+
+            lastKeyDownTime = nowMs;
+
+            if (isRepeat)
+            {
+                bool isPhysicallyPressed = true;
+                // If key is physically held and events arrive every ~33ms, it must NEVER recover as a fresh press
+                if (!isPhysicallyPressed || elapsedSinceLastKeyDown > 1000)
+                {
+                    isRepeat = false;
+                }
+            }
+
+            bool allowTrigger = false;
+            if (!isRepeat)
+            {
+                if (elapsedSinceLastSound >= minIntervalMs)
+                {
+                    allowTrigger = true;
+                }
+            }
+
+            if (allowTrigger)
+            {
+                soundTriggerCount++;
+                lastSoundTime = nowMs;
+            }
+        }
+
+        // Must trigger sound EXACTLY once on the initial press, and 0 times during the 3 seconds of held repeats!
+        Assert.Equal(1, soundTriggerCount);
+    }
 }

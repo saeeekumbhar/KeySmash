@@ -27,6 +27,8 @@ public sealed class KeyboardHook : IDisposable
     // Full 256-key state map to accurately track multiple held keys simultaneously (e.g. gaming WASD + Shift/Space)
     private readonly bool[] _isKeyDown = new bool[256];
     private readonly long[] _lastKeyDownTimestamp = new long[256];
+    private readonly long[] _lastSoundTriggerTimestamp = new long[256];
+    private bool _isDisposed;
     public bool SuppressHeldKeyRepeats { get; set; } = true;
     public bool PlayModifierKeys { get; set; } = true;
 
@@ -61,6 +63,7 @@ public sealed class KeyboardHook : IDisposable
     {
         Array.Clear(_isKeyDown, 0, _isKeyDown.Length);
         Array.Clear(_lastKeyDownTimestamp, 0, _lastKeyDownTimestamp.Length);
+        Array.Clear(_lastSoundTriggerTimestamp, 0, _lastSoundTriggerTimestamp.Length);
     }
 
     public static bool IsModifierKey(uint vkCode) => vkCode switch
@@ -103,14 +106,25 @@ public sealed class KeyboardHook : IDisposable
 
     public bool Start()
     {
+        if (_isDisposed)
+            return false;
+
         if (_hookId != nint.Zero)
             return true;
 
         ResetKeyState();
 
-        using var curProcess = Process.GetCurrentProcess();
-        using var curModule = curProcess.MainModule;
-        var moduleHandle = curModule?.BaseAddress ?? nint.Zero;
+        nint moduleHandle = nint.Zero;
+        try
+        {
+            using var curProcess = Process.GetCurrentProcess();
+            using var curModule = curProcess.MainModule;
+            moduleHandle = curModule?.BaseAddress ?? nint.Zero;
+        }
+        catch
+        {
+            moduleHandle = nint.Zero;
+        }
 
         _hookId = SetWindowsHookEx(WhKeyboardLl, _proc, moduleHandle, 0);
         return _hookId != nint.Zero;
@@ -144,16 +158,25 @@ public sealed class KeyboardHook : IDisposable
                     }
 
                     long now = Stopwatch.GetTimestamp();
-                    var lastKeyTime = vkCode < 256 ? _lastKeyDownTimestamp[vkCode] : 0;
-                    var elapsedPerKeyMs = lastKeyTime > 0 ? (now - lastKeyTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
+                    var lastKeyDownTime = vkCode < 256 ? _lastKeyDownTimestamp[vkCode] : 0;
+                    var lastSoundTime = vkCode < 256 ? _lastSoundTriggerTimestamp[vkCode] : 0;
+
+                    var elapsedSinceLastKeyDownMs = lastKeyDownTime > 0 ? (now - lastKeyDownTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
+                    var elapsedSinceLastSoundMs = lastSoundTime > 0 ? (now - lastSoundTime) * 1000 / Stopwatch.Frequency : long.MaxValue;
+
+                    // Always record the exact timestamp of each WM_KEYDOWN received to accurately detect gaps in typematic repeats
+                    if (vkCode < 256)
+                    {
+                        _lastKeyDownTimestamp[vkCode] = now;
+                    }
 
                     // Recover from missed WM_KEYUP (e.g. Win+L lock screen, Alt+Tab, UAC prompt, or focus transitions)
                     if (isRepeat)
                     {
                         bool isPhysicallyPressed = (GetAsyncKeyState((int)vkCode) & 0x8000) != 0;
-                        // Windows auto-repeat typematic delay never exceeds 1000ms. If elapsed > 1000ms or
-                        // hardware indicates the key was released, treat as a fresh press.
-                        if (!isPhysicallyPressed || elapsedPerKeyMs > 1000)
+                        // If the hardware indicates key is physically released, OR there was a >1000ms gap in the key-down stream,
+                        // recover from the missed WM_KEYUP and treat as a fresh press.
+                        if (!isPhysicallyPressed || elapsedSinceLastKeyDownMs > 1000)
                         {
                             isRepeat = false;
                         }
@@ -164,14 +187,14 @@ public sealed class KeyboardHook : IDisposable
                     if (!isRepeat)
                     {
                         // Per-key debounce: suppress switch bounce/chatter on the same key without dropping fast finger rolls
-                        if (elapsedPerKeyMs >= _minIntervalMs)
+                        if (elapsedSinceLastSoundMs >= _minIntervalMs)
                         {
                             allowTrigger = true;
                         }
                     }
                     else if (!SuppressHeldKeyRepeats)
                     {
-                        if (elapsedPerKeyMs >= _minIntervalMs)
+                        if (elapsedSinceLastSoundMs >= _minIntervalMs)
                         {
                             allowTrigger = true;
                         }
@@ -179,7 +202,7 @@ public sealed class KeyboardHook : IDisposable
                     else if (vkCode == 0x08 || vkCode == 0x2E) // Backspace or Delete
                     {
                         // Allow smooth, pleasant pacing when deleting text (90ms)
-                        if (elapsedPerKeyMs >= 90)
+                        if (elapsedSinceLastSoundMs >= 90)
                         {
                             allowTrigger = true;
                         }
@@ -195,7 +218,7 @@ public sealed class KeyboardHook : IDisposable
                     {
                         if (vkCode < 256)
                         {
-                            _lastKeyDownTimestamp[vkCode] = now;
+                            _lastSoundTriggerTimestamp[vkCode] = now;
                         }
 
                         var category = vkCode switch
@@ -232,6 +255,10 @@ public sealed class KeyboardHook : IDisposable
 
     public void Dispose()
     {
+        if (_isDisposed)
+            return;
+        _isDisposed = true;
+
         Stop();
         try
         {

@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dedicated modifier keys toggle (`PlayModifierKeys`): allows users to configure whether modifier keys (<kbd>Ctrl</kbd>, <kbd>Shift</kbd>, <kbd>Alt</kbd>, <kbd>Win</kbd>, <kbd>CapsLock</kbd>) trigger mechanical feedback or remain silent.
 
 ### Fixed
+- Fixed held-key repeat sound leak loophole: holding down any key for >1000ms falsely triggered sound repeats due to conflating typematic repeat gap timestamps with sound trigger timestamps; separated key-down tracking from sound pacing.
+- Fixed zip-slip jail rejection of valid archives containing root or relative directory entries (`./` or `""`).
+- Fixed orphaned disk files and directories when custom single audio file imports fail due to invalid or unplayable audio.
+- Fixed sound category classification false positives where regular keys like `backslash`, `backtick`, and `backquote` were erroneously categorized as `Backspace`.
+- Fixed audio buffer poisoning loophole by sanitizing `NaN` and `Infinity` floating-point sample values in `CachedSound`.
+- Fixed preview sound playing in complete silence when the application is muted by automatically unmuting on preview request.
+- Fixed leftover temporary settings files (`settings.*.tmp`) in `%LocalAppData%\KeySmash` when file moves encounter brief file locks.
+- Fixed UI checkbox desynchronization where `EnableToggle` remained checked even if the keyboard hook failed to attach.
+- Fixed potential `ObjectDisposedException` and invalid post-dispose hook attachment in `KeyboardHook`.
+- Fixed potential `Win32Exception` during keyboard hook initialization by defensively handling `Process.GetCurrentProcess().MainModule` access.
 - Fixed directory traversal and arbitrary deletion security vulnerability in `DeleteCustomPack` by enforcing strict user sounds jail boundaries.
 - Replaced discontinuous threshold saturation with continuous C1-smooth algebraic sigmoid soft limiter, eliminating audible popping artifacts above 0.85 amplitude.
 - Added streaming decompression byte tracking during ZIP import to protect against header-spoofed zip bombs.

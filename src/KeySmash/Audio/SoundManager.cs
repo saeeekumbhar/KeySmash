@@ -321,9 +321,13 @@ public sealed class SoundManager : IDisposable
                                string.Equals(parentDir, "return", StringComparison.OrdinalIgnoreCase);
 
                 bool isBackspace = fileName.StartsWith("backspace", StringComparison.OrdinalIgnoreCase) ||
-                                   fileName.StartsWith("back", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(fileName, "back", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("back_", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("back-", StringComparison.OrdinalIgnoreCase) ||
                                    fileName.StartsWith("delete", StringComparison.OrdinalIgnoreCase) ||
-                                   fileName.StartsWith("del", StringComparison.OrdinalIgnoreCase) ||
+                                   string.Equals(fileName, "del", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("del_", StringComparison.OrdinalIgnoreCase) ||
+                                   fileName.StartsWith("del-", StringComparison.OrdinalIgnoreCase) ||
                                    string.Equals(parentDir, "backspace", StringComparison.OrdinalIgnoreCase) ||
                                    string.Equals(parentDir, "delete", StringComparison.OrdinalIgnoreCase) ||
                                    string.Equals(parentDir, "del", StringComparison.OrdinalIgnoreCase);
@@ -415,6 +419,8 @@ public sealed class SoundManager : IDisposable
         if (!File.Exists(sourceFilePath))
             return false;
 
+        string? packDir = null;
+        string? destPath = null;
         try
         {
             // validate audio file readability and clamp max duration (max 15 seconds for typing effect)
@@ -425,11 +431,11 @@ public sealed class SoundManager : IDisposable
             }
 
             var safePackName = ResolveSafePackName(packName, "Custom");
-            var packDir = Path.Combine(targetBaseDir, safePackName);
+            packDir = Path.Combine(targetBaseDir, safePackName);
             Directory.CreateDirectory(packDir);
 
             var fileName = Path.GetFileName(sourceFilePath);
-            var destPath = Path.Combine(packDir, fileName);
+            destPath = Path.Combine(packDir, fileName);
             File.Copy(sourceFilePath, destPath, overwrite: true);
 
             var pack = LoadPackFromFolder(packDir, safePackName, isBuiltIn: false);
@@ -444,9 +450,27 @@ public sealed class SoundManager : IDisposable
                 }
                 return true;
             }
+
+            // Cleanup copied file and directory if import did not produce valid playable samples
+            if (destPath != null && File.Exists(destPath))
+            {
+                try { File.Delete(destPath); } catch { }
+            }
+            if (packDir != null && Directory.Exists(packDir) && !Directory.EnumerateFileSystemEntries(packDir).Any())
+            {
+                try { Directory.Delete(packDir, recursive: false); } catch { }
+            }
         }
         catch
         {
+            if (destPath != null && File.Exists(destPath))
+            {
+                try { File.Delete(destPath); } catch { }
+            }
+            if (packDir != null && Directory.Exists(packDir) && !Directory.EnumerateFileSystemEntries(packDir).Any())
+            {
+                try { Directory.Delete(packDir, recursive: false); } catch { }
+            }
             return false;
         }
 
@@ -484,6 +508,9 @@ public sealed class SoundManager : IDisposable
                 long totalUncompressed = 0;
                 foreach (var entry in archive.Entries)
                 {
+                    if (string.IsNullOrEmpty(entry.Name))
+                        continue; // directory entry
+
                     if (entry.Length > maxSingleFileBytes)
                         return false;
 
@@ -493,8 +520,11 @@ public sealed class SoundManager : IDisposable
 
                     // Zip slip traversal check
                     var entryDest = Path.GetFullPath(Path.Combine(packDir, entry.FullName));
-                    if (!entryDest.StartsWith(fullDest, StringComparison.OrdinalIgnoreCase))
+                    if (!entryDest.StartsWith(fullDest, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(entryDest, Path.GetFullPath(packDir), StringComparison.OrdinalIgnoreCase))
+                    {
                         return false;
+                    }
                 }
 
                 Directory.CreateDirectory(packDir);
