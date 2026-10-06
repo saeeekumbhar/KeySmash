@@ -128,7 +128,7 @@ public partial class App : Application
 
         if (!StartInBackground)
         {
-            mainWindow.Show();
+            mainWindow.RestoreFromTray();
         }
     }
 
