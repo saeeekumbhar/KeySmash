@@ -14,8 +14,36 @@ public partial class App : Application
 
     public static bool StartInBackground { get; private set; }
 
+    private static void Log(string message)
+    {
+        try
+        {
+            var logDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "KeySmash");
+            System.IO.Directory.CreateDirectory(logDir);
+            var logPath = System.IO.Path.Combine(logDir, "app.log");
+            System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}\r\n");
+        }
+        catch { }
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        AppDomain.CurrentDomain.UnhandledException += (s, args) =>
+        {
+            Log($"Unhandled AppDomain exception: {args.ExceptionObject}");
+        };
+        DispatcherUnhandledException += (s, args) =>
+        {
+            Log($"Unhandled Dispatcher exception: {args.Exception}");
+        };
+        TaskScheduler.UnobservedTaskException += (s, args) =>
+        {
+            Log($"Unobserved Task exception: {args.Exception}");
+        };
+
+        Log("App startup initiated");
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         bool isNewInstance;
@@ -31,6 +59,7 @@ public partial class App : Application
 
         if (!isNewInstance)
         {
+            Log("Another instance is already running. Signaling existing instance and shutting down.");
             _instanceMutex?.Dispose();
             _instanceMutex = null;
 
@@ -51,6 +80,8 @@ public partial class App : Application
             Shutdown();
             return;
         }
+
+        Log("First instance detected; continuing initialization.");
 
         // Create IPC event handle for subsequent instance activation
         try
@@ -123,17 +154,22 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        Log("Instantiating MainWindow...");
         var mainWindow = new MainWindow();
         MainWindow = mainWindow;
+        Log($"MainWindow instantiated. StartInBackground={StartInBackground}");
 
         if (!StartInBackground)
         {
+            Log("Calling RestoreFromTray on MainWindow...");
             mainWindow.RestoreFromTray();
+            Log("RestoreFromTray finished.");
         }
     }
 
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
+        Log("OnSessionEnding triggered.");
         if (MainWindow is MainWindow mw)
         {
             mw.PrepareForShutdown();
@@ -143,6 +179,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Log($"OnExit triggered. ExitCode={e.ApplicationExitCode}");
         if (MainWindow is MainWindow mw)
         {
             mw.PrepareForShutdown();
